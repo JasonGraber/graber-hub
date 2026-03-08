@@ -1,23 +1,31 @@
-# Data files (contain personal info)
+# === Web (Pi Dashboard) ===
 web/data.json
 web/photo-settings.json
 
-# OS files
+# === Android / Wear OS ===
+*.iml
+.gradle/
+**/build/
+local.properties
+.idea/
+*.apk
+*.aab
+*.jks
+*.keystore
+*.hprof
+.kotlin/
+
+# === OS ===
 .DS_Store
 Thumbs.db
 
-# IDE
-.idea/
+# === IDE ===
 .vscode/
 *.swp
 *.swo
 
-# APK builds
-*.apk
-*.zip
-
-# Node
+# === Node ===
 node_modules/
 
-# Logs
+# === Logs ===
 *.log

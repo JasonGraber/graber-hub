@@ -1,0 +1,25 @@
+package com.graberhub.companion.ui.theme
+
+import androidx.compose.ui.graphics.Color
+
+val ShedBlue = Color(0xFF03A9F4)
+val ShedBlueDark = Color(0xFF0288D1)
+val ShedBlueLight = Color(0xFFB3E5FC)
+val ShedPink = Color(0xFFEC5281)
+val ShedPinkLight = Color(0xFFFCE4EC)
+val BackgroundWhite = Color(0xFFFFFFFF)
+val BackgroundGray = Color(0xFFF7F8FA)
+val SurfaceWhite = Color(0xFFFFFFFF)
+val CardBackground = Color(0xFFFFFFFF)
+val TextPrimary = Color(0xFF1A1A2E)
+val TextSecondary = Color(0xFF6B7280)
+val TextHint = Color(0xFFB0B7C3)
+val DividerColor = Color(0xFFF0F0F5)
+val BorderLight = Color(0xFFE8EAF0)
+val CheckGreen = Color(0xFF22C55E)
+val CheckGreenLight = Color(0xFFDCFCE7)
+val KidPink = Color(0xFFEC5281)
+val KidBlue = Color(0xFF03A9F4)
+val KidPurple = Color(0xFFA78BFA)
+val KidGreen = Color(0xFF4ADE80)
+val ShadowColor = Color(0x1A000000)
