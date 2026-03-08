@@ -1,0 +1,141 @@
+{
+    "schedules": {
+        "2026-03-08": [
+            {
+                "id": 106,
+                "time_start": "08:00",
+                "time_end": "13:00",
+                "title": "Day time",
+                "emoji": "\ud83d\ude02",
+                "sort": 0
+            }
+        ]
+    },
+    "nextId": 106,
+    "kids": [
+        {
+            "id": 1,
+            "name": "Aurora",
+            "initial": "A",
+            "color": "#ec5281",
+            "sort": 1
+        },
+        {
+            "id": 2,
+            "name": "Deandre",
+            "initial": "D",
+            "color": "#03a9f4",
+            "sort": 2
+        },
+        {
+            "id": 3,
+            "name": "Alexia",
+            "initial": "A",
+            "color": "#a78bfa",
+            "sort": 3
+        },
+        {
+            "id": 4,
+            "name": "Truett",
+            "initial": "T",
+            "color": "#4ade80",
+            "sort": 4
+        }
+    ],
+    "chores": {
+        "2026-03-08": [
+            {
+                "id": 103,
+                "kid_id": 1,
+                "title": "make bed",
+                "emoji": "\u2764\ufe0f",
+                "done": true
+            },
+            {
+                "id": 104,
+                "kid_id": 2,
+                "title": "test",
+                "emoji": "\ud83d\ude03",
+                "done": false
+            },
+            {
+                "id": 105,
+                "kid_id": 1,
+                "title": "do the dishes ",
+                "emoji": "\ud83d\ude03",
+                "done": true
+            }
+        ]
+    },
+    "countdowns": [
+        {
+            "id": 1,
+            "label": "Bansko Trip",
+            "emoji": "\ud83c\udfd4\ufe0f",
+            "target_date": "2026-03-16"
+        },
+        {
+            "id": 2,
+            "label": "Anniversary",
+            "emoji": "\ud83d\udc95",
+            "target_date": "2026-06-19"
+        }
+    ],
+    "verses": [
+        {
+            "id": 1,
+            "text": "Train up a child in the way he should go; even when he is old he will not depart from it.",
+            "ref": "Proverbs 22:6"
+        },
+        {
+            "id": 2,
+            "text": "Children, obey your parents in the Lord, for this is right.",
+            "ref": "Ephesians 6:1"
+        },
+        {
+            "id": 3,
+            "text": "I can do all things through Christ who strengthens me.",
+            "ref": "Philippians 4:13"
+        },
+        {
+            "id": 4,
+            "text": "Be strong and courageous. Do not be afraid; do not be discouraged, for the Lord your God will be with you wherever you go.",
+            "ref": "Joshua 1:9"
+        },
+        {
+            "id": 5,
+            "text": "The Lord is my shepherd; I shall not want.",
+            "ref": "Psalm 23:1"
+        },
+        {
+            "id": 6,
+            "text": "Trust in the Lord with all your heart and lean not on your own understanding.",
+            "ref": "Proverbs 3:5"
+        },
+        {
+            "id": 7,
+            "text": "For I know the plans I have for you, declares the Lord, plans to prosper you and not to harm you, plans to give you hope and a future.",
+            "ref": "Jeremiah 29:11"
+        },
+        {
+            "id": 8,
+            "text": "Love is patient, love is kind. It does not envy, it does not boast, it is not proud.",
+            "ref": "1 Corinthians 13:4"
+        },
+        {
+            "id": 9,
+            "text": "And we know that in all things God works for the good of those who love him, who have been called according to his purpose.",
+            "ref": "Romans 8:28"
+        },
+        {
+            "id": 10,
+            "text": "The fruit of the Spirit is love, joy, peace, forbearance, kindness, goodness, faithfulness, gentleness and self-control.",
+            "ref": "Galatians 5:22-23"
+        }
+    ],
+    "timer": {
+        "active": false,
+        "end_time": null,
+        "label": ""
+    }
+}

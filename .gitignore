@@ -1,0 +1,23 @@
+# Data files (contain personal info)
+web/data.json
+web/photo-settings.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# APK builds
+*.apk
+*.zip
+
+# Node
+node_modules/
+
+# Logs
+*.log
