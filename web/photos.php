@@ -97,7 +97,7 @@ function fetchAlbumPhotos($albumUrl) {
         // Skip tiny thumbnails (profile pics etc)
         if (strlen($url) < 60) continue;
         // Add high-res size param (1920x1080 for the DAKboard)
-        $cleaned[] = $url . '=w1920-h1080-no';
+        $cleaned[] = $url . '=w3840-h2160-no';
     }
     
     return array_values(array_unique($cleaned));

@@ -470,6 +470,8 @@
       height: 100%;
       background-size: cover;
       background-position: center;
+      image-rendering: auto;
+      background-position: center;
       background-repeat: no-repeat;
       opacity: 0;
       transition: opacity 2s ease-in-out;
@@ -1297,6 +1299,8 @@
       if (photoList.length === 0) return;
       
       var url = photoList[photoIndex];
+      // Ensure high-res
+      if (url.indexOf("=w") === -1) url = url + "=w3840-h2160-no";
       photoIndex = (photoIndex + 1) % photoList.length;
       
       // Re-shuffle when we've gone through all
