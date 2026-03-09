@@ -1078,31 +1078,32 @@
     }, 30000);
 
     // ============ TIMER ============
+        function renderTimer(data) {
+      if (data.active && data.end_time) {
+        timerEndTime = new Date(data.end_time).getTime();
+        timerLabel = data.label || "Timer";
+        if (!timerInterval) {
+          timerInterval = setInterval(updateTimerDisplay, 100);
+        }
+      } else {
+        timerEndTime = null;
+        timerLabel = "";
+        if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+        stopAlarm();
+        document.getElementById("timer-display").textContent = "00:00";
+        document.getElementById("timer-display").className = "timer-display";
+        document.getElementById("timer-unit").textContent = "READY";
+        document.getElementById("timer-idle").textContent = "Set from the app";
+        document.getElementById("timer-idle").style.display = "";
+        document.getElementById("timer-emoji").textContent = "\u23F1";
+      }
+    }
+
     function fetchTimer() {
       var xhr = new XMLHttpRequest();
       xhr.open("GET", API + "/timer");
       xhr.onload = function() {
-        try {
-          var data = JSON.parse(xhr.responseText);
-          if (data.active && data.end_time) {
-            timerEndTime = new Date(data.end_time).getTime();
-            timerLabel = data.label || "Timer";
-            if (!timerInterval) {
-              timerInterval = setInterval(updateTimerDisplay, 100);
-            }
-          } else {
-            timerEndTime = null;
-            timerLabel = "";
-            if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-            stopAlarm();
-            document.getElementById("timer-display").textContent = "00:00";
-            document.getElementById("timer-display").className = "timer-display";
-            document.getElementById("timer-unit").textContent = "READY";
-            document.getElementById("timer-idle").textContent = "Set from the app";
-            document.getElementById("timer-idle").style.display = "";
-            document.getElementById("timer-emoji").textContent = "\u23F1";
-          }
-        } catch(e) {}
+        try { renderTimer(JSON.parse(xhr.responseText)); } catch(e) {}
       };
       xhr.send();
     }
@@ -1219,20 +1220,21 @@
     }
 
     // ============ MAIN FETCH ============
+        function renderDashboard(data) {
+      renderKids(data.kids);
+      renderSchedule(data.schedule);
+      renderCountdownHero(data.countdowns);
+      renderCountdownBar(data.countdowns);
+      renderVerse(data.verse);
+    }
+
     function fetchDashboard() {
       var xhr = new XMLHttpRequest();
       xhr.open("GET", API + "/dashboard");
       xhr.onload = function() {
         try {
-          var data = JSON.parse(xhr.responseText);
-          renderKids(data.kids);
-          renderSchedule(data.schedule);
-          renderCountdownHero(data.countdowns);
-          renderCountdownBar(data.countdowns);
-          renderVerse(data.verse);
-        } catch(e) {
-          console.error("Parse error:", e);
-        }
+          renderDashboard(JSON.parse(xhr.responseText));
+        } catch(e) {}
       };
       xhr.send();
     }
@@ -1356,9 +1358,14 @@
       incoming.style.setProperty("--kb-x", kb.x);
       incoming.style.setProperty("--kb-y", kb.y);
       
-      // Preload image to detect dimensions
+      // Preload image with timeout
       var img = new Image();
+      var imgTimeout = setTimeout(function() {
+        img.src = ""; // Cancel load
+        if (photoList.length > 1) showNextPhoto();
+      }, 15000); // 15s timeout per image
       img.onload = function() {
+        clearTimeout(imgTimeout);
         var imgUrl = 'url("' + url + '")';
         // Set foreground (sharp, contained)
         incomingFg.style.backgroundImage = imgUrl;
@@ -1385,6 +1392,7 @@
         }, 2500);
       };
       img.onerror = function() {
+        clearTimeout(imgTimeout);
         // Skip bad photos
         if (photoList.length > 1) showNextPhoto();
       };
@@ -1437,20 +1445,89 @@
       origRenderVerse(verse);
     };
 
+    // ============ RESILIENT HEARTBEAT SYSTEM ============
+    var heartbeatInterval = 10000;  // Normal: 10s
+    var heartbeatBackoff = 10000;   // Current interval (grows on failure)
+    var heartbeatMaxBackoff = 60000; // Max: 60s
+    var heartbeatFailCount = 0;
+    var heartbeatTimer = null;
+    var lastHeartbeatOk = Date.now();
+
+    function heartbeat() {
+      var xhr = new XMLHttpRequest();
+      xhr.timeout = 8000; // 8s timeout
+      xhr.open("GET", API + "/heartbeat");
+      xhr.onload = function() {
+        try {
+          var data = JSON.parse(xhr.responseText);
+
+          // Dashboard data
+          if (data.dashboard) {
+            renderDashboard(data.dashboard);
+          }
+
+          // Timer
+          if (data.timer) {
+            renderTimer(data.timer);
+          }
+
+          // Display mode
+          var rawMode = data.rawMode || "dashboard";
+          updateModeIndicator(rawMode);
+          if (data.mode === "photos" && !photoFrameActive) {
+            startPhotoFrame(data.photoSettings);
+          } else if (data.mode === "dashboard" && photoFrameActive) {
+            stopPhotoFrame();
+          }
+          if (data.photoSettings && data.photoSettings.transition_seconds) {
+            photoTransitionSec = data.photoSettings.transition_seconds;
+          }
+
+          // Success — reset backoff
+          heartbeatFailCount = 0;
+          heartbeatBackoff = heartbeatInterval;
+          lastHeartbeatOk = Date.now();
+        } catch(e) {
+          heartbeatFail();
+        }
+      };
+      xhr.onerror = function() { heartbeatFail(); };
+      xhr.ontimeout = function() { heartbeatFail(); };
+      xhr.send();
+    }
+
+    function heartbeatFail() {
+      heartbeatFailCount++;
+      // Exponential backoff: 10s, 20s, 40s, 60s max
+      heartbeatBackoff = Math.min(heartbeatBackoff * 2, heartbeatMaxBackoff);
+      scheduleHeartbeat();
+
+      // If disconnected for > 5 minutes, force page reload
+      if (Date.now() - lastHeartbeatOk > 300000) {
+        location.reload();
+      }
+    }
+
+    function scheduleHeartbeat() {
+      if (heartbeatTimer) clearTimeout(heartbeatTimer);
+      heartbeatTimer = setTimeout(function() {
+        heartbeat();
+        scheduleHeartbeat();
+      }, heartbeatBackoff);
+    }
+
     // Init
     updateClock();
     fetchWeather();
-    fetchDashboard();
-    fetchTimer();
     initDots("countdown-dots");
     initDots("timer-dots");
-    checkPhotoMode();
+
+    // First heartbeat immediately
+    heartbeat();
+    scheduleHeartbeat();
 
     setInterval(updateClock, 1000);
-    setInterval(fetchDashboard, 15000);
     setInterval(fetchWeather, 600000);
-    setInterval(fetchTimer, 5000);
-    setInterval(checkPhotoMode, 5000); // Check mode every 5s for responsive switching
     setInterval(updatePhotoOverlays, 1000); // Update photo clock every second
   </script>
 </body>

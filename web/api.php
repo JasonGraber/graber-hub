@@ -397,6 +397,56 @@ if ($path === "/photo-settings" && $method === "POST") {
     echo json_encode($settings);
     exit;
 }
+// ============ HEARTBEAT (combined endpoint) ============
+if ($path === '/heartbeat' && $method === 'GET') {
+    $data = loadData();
+    $d = today();
+    $chores = $data['chores'][$d] ?? [];
+    $schedule = $data['schedules'][$d] ?? [];
+    $verses = $data['verses'] ?? [];
+    $dayOfYear = date('z');
+    $verse = count($verses) > 0 ? $verses[$dayOfYear % count($verses)] : null;
+
+    usort($schedule, function($a, $b) {
+        return strcmp($a['time_start'], $b['time_start']);
+    });
+
+    $kidsData = $data['kids'] ?? [];
+    $kids = array_map(function($kid) use ($chores) {
+        $kidChores = array_values(array_filter($chores, function($c) use ($kid) { return $c['kid_id'] === $kid['id']; }));
+        $done = count(array_filter($kidChores, function($c) { return $c['done']; }));
+        return array_merge($kid, ['chores' => $kidChores, 'done' => $done, 'total' => count($kidChores)]);
+    }, $kidsData);
+
+    $timer = $data['timer'] ?? ['active' => false, 'end_time' => null, 'label' => ''];
+
+    $settingsFile = '/home/pi/graber-hub/photo-settings.json';
+    $photoSettings = file_exists($settingsFile) ? json_decode(file_get_contents($settingsFile), true) : ['mode' => 'dashboard'];
+    $mode = $photoSettings['mode'] ?? 'dashboard';
+    if ($mode === 'auto') {
+        $now = date('H:i');
+        $start = $photoSettings['auto_schedule']['photos_start'] ?? '20:00';
+        $end = $photoSettings['auto_schedule']['photos_end'] ?? '07:00';
+        if ($start > $end) {
+            $resolvedMode = ($now >= $start || $now < $end) ? 'photos' : 'dashboard';
+        } else {
+            $resolvedMode = ($now >= $start && $now < $end) ? 'photos' : 'dashboard';
+        }
+    } else {
+        $resolvedMode = $mode;
+    }
+
+    echo json_encode([
+        'dashboard' => ['kids' => $kids, 'schedule' => $schedule, 'countdowns' => $data['countdowns'] ?? [], 'verse' => $verse, 'date' => $d],
+        'timer' => $timer,
+        'mode' => $resolvedMode,
+        'rawMode' => $mode,
+        'photoSettings' => $photoSettings,
+        'ts' => time()
+    ]);
+    exit;
+}
+
 // Fallback
 http_response_code(404);
 echo json_encode(['error' => 'not found', 'path' => $path, 'method' => $method]);
