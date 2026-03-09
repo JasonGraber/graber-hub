@@ -468,24 +468,46 @@
       top: 0; left: 0;
       width: 100%;
       height: 100%;
-      background-size: cover;
-      background-position: center;
-      image-rendering: auto;
-      background-position: center;
-      background-repeat: no-repeat;
       opacity: 0;
       transition: opacity 2s ease-in-out;
     }
 
+    .photo-slide .photo-bg {
+      position: absolute;
+      top: -20px; left: -20px; right: -20px; bottom: -20px;
+      background-size: cover;
+      background-position: center;
+      background-repeat: no-repeat;
+      filter: blur(30px) brightness(0.4);
+      transform: scale(1.1);
+    }
+
+    .photo-slide .photo-fg {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      background-size: contain;
+      background-position: center;
+      background-repeat: no-repeat;
+    }
+
     .photo-slide.visible { opacity: 1; }
 
-    .photo-slide.ken-burns {
+    .photo-slide.ken-burns .photo-fg {
       animation: kenBurns 30s ease-in-out forwards;
+    }
+    .photo-slide.ken-burns .photo-bg {
+      animation: kenBurnsBg 30s ease-in-out forwards;
     }
 
     @keyframes kenBurns {
       0% { transform: scale(1.0) translate(0, 0); }
-      100% { transform: scale(1.15) translate(var(--kb-x), var(--kb-y)); }
+      100% { transform: scale(1.08) translate(var(--kb-x), var(--kb-y)); }
+    }
+    @keyframes kenBurnsBg {
+      0% { transform: scale(1.1) translate(0, 0); }
+      100% { transform: scale(1.2) translate(var(--kb-x), var(--kb-y)); }
     }
 
     .photo-overlay {
@@ -621,8 +643,14 @@
 <body>
   <!-- PHOTO FRAME MODE -->
   <div class="photo-frame" id="photo-frame">
-    <div class="photo-slide" id="photo-slide-a"></div>
-    <div class="photo-slide" id="photo-slide-b"></div>
+    <div class="photo-slide" id="photo-slide-a">
+      <div class="photo-bg" id="photo-bg-a"></div>
+      <div class="photo-fg" id="photo-fg-a"></div>
+    </div>
+    <div class="photo-slide" id="photo-slide-b">
+      <div class="photo-bg" id="photo-bg-b"></div>
+      <div class="photo-fg" id="photo-fg-b"></div>
+    </div>
     <div class="photo-verse-overlay" id="photo-verse">
       <div class="photo-verse-text" id="photo-verse-text"></div>
       <div class="photo-verse-ref" id="photo-verse-ref"></div>
@@ -1295,12 +1323,18 @@
       if (photoInterval) { clearInterval(photoInterval); photoInterval = null; }
     }
 
+    function getPhotoUrl(baseUrl, size) {
+      // Strip existing size params and add new one
+      var clean = baseUrl.replace(/=[whsm]\d+.*$/, "");
+      return clean + "=" + size;
+    }
+
     function showNextPhoto() {
       if (photoList.length === 0) return;
       
-      var url = photoList[photoIndex];
-      // Ensure high-res
-      if (url.indexOf("=w") === -1) url = url + "=w3840-h2160-no";
+      var rawUrl = photoList[photoIndex];
+      // Main image: request at screen res for sharpness
+      var url = getPhotoUrl(rawUrl, "w1920-h1080");
       photoIndex = (photoIndex + 1) % photoList.length;
       
       // Re-shuffle when we've gone through all
@@ -1308,31 +1342,35 @@
         photoList = shuffleArray(photoList);
       }
       
-      var slideA = document.getElementById("photo-slide-a");
-      var slideB = document.getElementById("photo-slide-b");
-      
-      var incoming, outgoing;
-      if (photoCurrentSlide === "a") {
-        incoming = slideB;
-        outgoing = slideA;
-        photoCurrentSlide = "b";
-      } else {
-        incoming = slideA;
-        outgoing = slideB;
-        photoCurrentSlide = "a";
-      }
+      var slideName = (photoCurrentSlide === "a") ? "b" : "a";
+      photoCurrentSlide = slideName;
+      var incoming = document.getElementById("photo-slide-" + slideName);
+      var outgoing = document.getElementById("photo-slide-" + (slideName === "a" ? "b" : "a"));
+      var incomingBg = document.getElementById("photo-bg-" + slideName);
+      var incomingFg = document.getElementById("photo-fg-" + slideName);
+      var outgoingBg = document.getElementById("photo-bg-" + (slideName === "a" ? "b" : "a"));
+      var outgoingFg = document.getElementById("photo-fg-" + (slideName === "a" ? "b" : "a"));
       
       // Set Ken Burns random direction
       var kb = KB_OFFSETS[Math.floor(Math.random() * KB_OFFSETS.length)];
       incoming.style.setProperty("--kb-x", kb.x);
       incoming.style.setProperty("--kb-y", kb.y);
       
-      // Preload image
+      // Preload image to detect dimensions
       var img = new Image();
       img.onload = function() {
-        incoming.style.backgroundImage = 'url("' + url + '")';
+        var imgUrl = 'url("' + url + '")';
+        // Set foreground (sharp, contained)
+        incomingFg.style.backgroundImage = imgUrl;
+        // Set background (blurred fill)
+        incomingBg.style.backgroundImage = imgUrl;
+        
         incoming.className = "photo-slide visible ken-burns";
-        incoming.style.animationDuration = photoTransitionSec + "s";
+        
+        var fgAnim = incomingFg.style;
+        var bgAnim = incomingBg.style;
+        fgAnim.animationDuration = photoTransitionSec + "s";
+        bgAnim.animationDuration = photoTransitionSec + "s";
         
         // Fade out old slide after crossfade
         setTimeout(function() {
@@ -1342,7 +1380,8 @@
         // Reset animation on outgoing for next use
         setTimeout(function() {
           outgoing.className = "photo-slide";
-          outgoing.style.backgroundImage = "";
+          outgoingFg.style.backgroundImage = "";
+          outgoingBg.style.backgroundImage = "";
         }, 2500);
       };
       img.onerror = function() {
