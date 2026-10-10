@@ -14,7 +14,7 @@ A family command center built on a Raspberry Pi. Manage schedules, chores, count
 | | Web Dashboard | Phone App | Watch App |
 |---|---|---|---|
 | 📅 **Schedule** | Full-day timeline with progress tracking | Add, edit, delete blocks + templates | View today's blocks |
-| ✅ **Chores** | Per-kid cards with completion animations | Assign and toggle chores | Tap to complete |
+| ✅ **Chores** | Per-kid cards with completion animations | Assign, toggle, and schedule chores every 1, 2, or 4 weeks | Tap to complete |
 | ⏳ **Countdowns** | Animated hero countdown with floating dots | Manage upcoming events | Quick glance |
 | ⏱️ **Timer** | Full-screen countdown with alarm | Start/stop from anywhere | Timer controls |
 | 📖 **Verses** | Daily rotation in header | Add and manage verses | — |
@@ -144,8 +144,10 @@ Base URL: `http://<PI_IP>/api.php`
 | `/schedule/{id}` | DELETE | Delete a schedule block |
 | `/chores` | GET | Today's chores |
 | `/chores` | POST | Add a chore |
-| `/chores/{id}/toggle` | POST | Toggle chore completion |
+| `/chores/{id}/toggle` | PUT | Toggle chore completion |
 | `/chores/{id}` | DELETE | Delete a chore |
+| `/chore-templates` | GET/POST | List or create recurring chore templates |
+| `/chore-templates/{id}` | PUT/DELETE | Update or delete a recurring chore template |
 | `/kids/{id}` | PUT | Update kid config (name, color) |
 | `/countdowns` | GET/POST | List or add countdowns |
 | `/countdowns/{id}` | DELETE | Delete a countdown |

@@ -6,7 +6,7 @@ header('Access-Control-Allow-Headers: Content-Type, X-Data-Version');
 header('Access-Control-Expose-Headers: X-Data-Version');
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(200); exit; }
 
-$DATA_FILE = '/home/pi/graber-hub/data.json';
+$DATA_FILE = getenv('GRABER_HUB_DATA_FILE') ?: '/home/pi/graber-hub/data.json';
 
 function loadData() {
     global $DATA_FILE;
@@ -147,6 +147,137 @@ function nextId(&$data) {
     return $data['nextId'];
 }
 
+function normalizeDate($value, $fallback = null) {
+    $candidate = is_string($value) ? trim($value) : '';
+    $date = DateTimeImmutable::createFromFormat('!Y-m-d', $candidate);
+    return $date && $date->format('Y-m-d') === $candidate
+        ? $candidate
+        : ($fallback ?? today());
+}
+
+function normalizeIntList($values, $min, $max) {
+    if (!is_array($values)) return [];
+    $normalized = [];
+    foreach ($values as $value) {
+        $number = (int)$value;
+        if ($number >= $min && $number <= $max) $normalized[] = $number;
+    }
+    $normalized = array_values(array_unique($normalized));
+    sort($normalized);
+    return $normalized;
+}
+
+function normalizeChoreTemplate($input, $existing = []) {
+    $merged = array_merge($existing, is_array($input) ? $input : []);
+    $repeat = in_array(($merged['repeat'] ?? 'none'), ['daily', 'weekly', 'monthly', 'none'], true)
+        ? $merged['repeat']
+        : 'none';
+    $legacyEveryOtherWeek = filter_var($merged['every_other_week'] ?? false, FILTER_VALIDATE_BOOLEAN);
+    $weekInterval = (int)($merged['week_interval'] ?? ($legacyEveryOtherWeek ? 2 : 1));
+    if (!in_array($weekInterval, [1, 2, 4], true)) $weekInterval = 1;
+
+    return [
+        'id' => (int)($merged['id'] ?? 0),
+        'kid_id' => (int)($merged['kid_id'] ?? 0),
+        'title' => trim((string)($merged['title'] ?? '')),
+        'emoji' => (string)($merged['emoji'] ?? ''),
+        'repeat' => $repeat,
+        'days_of_week' => normalizeIntList($merged['days_of_week'] ?? [], 0, 6),
+        'week_interval' => $weekInterval,
+        'every_other_week' => $weekInterval === 2,
+        'days_of_month' => normalizeIntList($merged['days_of_month'] ?? [], 1, 31),
+        'start_date' => normalizeDate($merged['start_date'] ?? null),
+        'active' => filter_var($merged['active'] ?? true, FILTER_VALIDATE_BOOLEAN),
+    ];
+}
+
+function choreTemplateDueOnDate($template, $date) {
+    if (!($template['active'] ?? true)) return false;
+    $target = DateTimeImmutable::createFromFormat('!Y-m-d', $date);
+    $start = DateTimeImmutable::createFromFormat('!Y-m-d', normalizeDate($template['start_date'] ?? null));
+    if (!$target || !$start || $target < $start) return false;
+
+    $repeat = $template['repeat'] ?? 'none';
+    if ($repeat === 'daily') return true;
+    if ($repeat === 'none') return $target == $start;
+    if ($repeat === 'monthly') {
+        $days = normalizeIntList($template['days_of_month'] ?? [], 1, 31);
+        if (!$days) $days = [(int)$start->format('j')];
+        return in_array((int)$target->format('j'), $days, true);
+    }
+    if ($repeat === 'weekly') {
+        $days = normalizeIntList($template['days_of_week'] ?? [], 0, 6);
+        if (!$days) $days = [(int)$start->format('w')];
+        if (!in_array((int)$target->format('w'), $days, true)) return false;
+        $interval = (int)($template['week_interval'] ?? (($template['every_other_week'] ?? false) ? 2 : 1));
+        if (!in_array($interval, [1, 2, 4], true)) $interval = 1;
+        $daysSinceStart = (int)$start->diff($target)->format('%a');
+        return intdiv($daysSinceStart, 7) % $interval === 0;
+    }
+    return false;
+}
+
+/** Materialize due recurring chores once per template/date so they can be toggled and edited normally. */
+function loadDataWithRecurringChores($date) {
+    global $DATA_FILE;
+    $date = normalizeDate($date);
+    $handle = fopen($DATA_FILE, 'c+');
+    if (!$handle || !flock($handle, LOCK_EX)) {
+        throw new RuntimeException('Unable to lock dashboard data');
+    }
+
+    rewind($handle);
+    $json = stream_get_contents($handle);
+    $isNewDataFile = $json === '';
+    $data = $isNewDataFile ? getDefaultData() : json_decode($json, true);
+    if (!is_array($data)) {
+        flock($handle, LOCK_UN);
+        fclose($handle);
+        throw new RuntimeException('Dashboard data is invalid JSON');
+    }
+
+    if (!isset($data['chores']) || !is_array($data['chores'])) {
+        $data['chores'] = [];
+    }
+    if (!isset($data['schedules']) || !is_array($data['schedules'])) {
+        $data['schedules'] = [];
+    }
+    if (!isset($data['chores'][$date]) || !is_array($data['chores'][$date])) {
+        $data['chores'][$date] = [];
+    }
+    $changed = $isNewDataFile;
+    foreach (($data['chore_templates'] ?? []) as $rawTemplate) {
+        $template = normalizeChoreTemplate($rawTemplate, $rawTemplate);
+        if (!choreTemplateDueOnDate($template, $date)) continue;
+        $alreadyExists = false;
+        foreach ($data['chores'][$date] as $chore) {
+            if ((int)($chore['template_id'] ?? 0) === $template['id']) {
+                $alreadyExists = true;
+                break;
+            }
+        }
+        if ($alreadyExists) continue;
+        $data['chores'][$date][] = [
+            'id' => nextId($data),
+            'kid_id' => $template['kid_id'],
+            'title' => $template['title'],
+            'emoji' => $template['emoji'],
+            'done' => false,
+            'template_id' => $template['id'],
+        ];
+        $changed = true;
+    }
+
+    if ($changed) {
+        $data['data_version'] = currentDataVersion($data) + 1;
+        writeDataToHandle($handle, $data);
+    }
+    sendDataVersion(currentDataVersion($data));
+    flock($handle, LOCK_UN);
+    fclose($handle);
+    return $data;
+}
+
 function getDefaultData() {
     return [
         'kids' => [
@@ -156,6 +287,7 @@ function getDefaultData() {
             ['id' => 4, 'name' => 'Truett', 'initial' => 'T', 'color' => '#4ade80', 'sort' => 4],
         ],
         'chores' => new stdClass(),
+        'chore_templates' => [],
         'schedules' => new stdClass(),
         'countdowns' => [
             ['id' => 1, 'label' => 'Bansko Trip', 'emoji' => "\xF0\x9F\x8F\x94\xEF\xB8\x8F", 'target_date' => '2026-03-16'],
@@ -190,10 +322,10 @@ if (empty($path)) $path = '/';
 
 // ============ DASHBOARD ============
 if ($path === '/dashboard' && $method === 'GET') {
-    $data = loadData();
+    $d = today();
+    $data = loadDataWithRecurringChores($d);
     $dataVersion = currentDataVersion($data);
     sendDataVersion($dataVersion);
-    $d = today();
     $chores = $data['chores'][$d] ?? [];
     $schedule = $data['schedules'][$d] ?? [];
 
@@ -238,8 +370,8 @@ if (preg_match('#^/kids/(\d+)$#', $path, $m) && $method === 'PUT') {
 
 // ============ CHORES ============
 if ($path === '/chores' && $method === 'GET') {
-    $data = loadData();
     $d = $_GET['date'] ?? today();
+    $data = loadDataWithRecurringChores($d);
     echo json_encode($data['chores'][$d] ?? []);
     exit;
 }
@@ -298,6 +430,64 @@ if (preg_match('#^/chores/(\d+)$#', $path, $m) && $method === 'DELETE') {
             return ['__status' => 404, 'error' => 'not found'];
         }
         $data['chores'][$d] = $remaining;
+        return ['ok' => true];
+    });
+}
+
+// ============ CHORE TEMPLATES ============
+if ($path === '/chore-templates' && $method === 'GET') {
+    $data = loadData();
+    sendDataVersion(currentDataVersion($data));
+    $templates = array_map(function ($template) {
+        return normalizeChoreTemplate($template, $template);
+    }, $data['chore_templates'] ?? []);
+    echo json_encode($templates);
+    exit;
+}
+
+if ($path === '/chore-templates' && $method === 'POST') {
+    mutateData(function (&$data) use ($body) {
+        $template = normalizeChoreTemplate($body);
+        if ($template['kid_id'] <= 0 || $template['title'] === '') {
+            return ['__status' => 422, 'error' => 'kid_id and title are required'];
+        }
+        $template['id'] = nextId($data);
+        if (!isset($data['chore_templates']) || !is_array($data['chore_templates'])) {
+            $data['chore_templates'] = [];
+        }
+        $data['chore_templates'][] = $template;
+        return ['id' => $template['id']];
+    });
+}
+
+if (preg_match('#^/chore-templates/(\d+)$#', $path, $m) && $method === 'PUT') {
+    $id = (int)$m[1];
+    mutateData(function (&$data) use ($id, $body) {
+        foreach (($data['chore_templates'] ?? []) as $index => $existing) {
+            if ((int)($existing['id'] ?? 0) !== $id) continue;
+            $template = normalizeChoreTemplate($body, $existing);
+            $template['id'] = $id;
+            if ($template['kid_id'] <= 0 || $template['title'] === '') {
+                return ['__status' => 422, 'error' => 'kid_id and title are required'];
+            }
+            $data['chore_templates'][$index] = $template;
+            return ['id' => $id, 'ok' => true];
+        }
+        return ['__status' => 404, 'error' => 'not found'];
+    });
+}
+
+if (preg_match('#^/chore-templates/(\d+)$#', $path, $m) && $method === 'DELETE') {
+    $id = (int)$m[1];
+    mutateData(function (&$data) use ($id) {
+        $templates = $data['chore_templates'] ?? [];
+        $remaining = array_values(array_filter($templates, function ($template) use ($id) {
+            return (int)($template['id'] ?? 0) !== $id;
+        }));
+        if (count($remaining) === count($templates)) {
+            return ['__status' => 404, 'error' => 'not found'];
+        }
+        $data['chore_templates'] = $remaining;
         return ['ok' => true];
     });
 }
@@ -513,8 +703,8 @@ if ($path === "/photo-settings" && $method === "POST") {
 }
 // ============ HEARTBEAT (combined endpoint) ============
 if ($path === '/heartbeat' && $method === 'GET') {
-    $data = loadData();
     $d = today();
+    $data = loadDataWithRecurringChores($d);
     $chores = $data['chores'][$d] ?? [];
     $schedule = $data['schedules'][$d] ?? [];
     $verses = $data['verses'] ?? [];
