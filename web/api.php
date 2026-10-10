@@ -2,7 +2,8 @@
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type');
+header('Access-Control-Allow-Headers: Content-Type, X-Data-Version');
+header('Access-Control-Expose-Headers: X-Data-Version');
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(200); exit; }
 
 $DATA_FILE = '/home/pi/graber-hub/data.json';
@@ -12,14 +13,129 @@ function loadData() {
     if (!file_exists($DATA_FILE)) {
         $data = getDefaultData();
         saveData($data);
-        return $data;
+        return loadData();
     }
-    return json_decode(file_get_contents($DATA_FILE), true);
+    $handle = fopen($DATA_FILE, 'r');
+    if (!$handle || !flock($handle, LOCK_SH)) {
+        throw new RuntimeException('Unable to read dashboard data');
+    }
+    $json = stream_get_contents($handle);
+    flock($handle, LOCK_UN);
+    fclose($handle);
+    $data = json_decode($json, true);
+    if (!is_array($data)) {
+        throw new RuntimeException('Dashboard data is invalid JSON');
+    }
+    return $data;
 }
 
 function saveData($data) {
     global $DATA_FILE;
-    file_put_contents($DATA_FILE, json_encode($data, JSON_PRETTY_PRINT));
+    $handle = fopen($DATA_FILE, 'c+');
+    if (!$handle || !flock($handle, LOCK_EX)) {
+        throw new RuntimeException('Unable to lock dashboard data');
+    }
+
+    rewind($handle);
+    $existingJson = stream_get_contents($handle);
+    $existing = $existingJson === '' ? null : json_decode($existingJson, true);
+    $incomingVersion = currentDataVersion($data);
+    if (is_array($existing)) {
+        $serverVersion = currentDataVersion($existing);
+        if ($incomingVersion !== $serverVersion) {
+            sendDataVersion($serverVersion);
+            flock($handle, LOCK_UN);
+            fclose($handle);
+            http_response_code(409);
+            echo json_encode(['error' => 'stale data', 'data_version' => $serverVersion]);
+            exit;
+        }
+    }
+
+    $data['data_version'] = $incomingVersion + 1;
+    writeDataToHandle($handle, $data);
+    sendDataVersion($data['data_version']);
+    flock($handle, LOCK_UN);
+    fclose($handle);
+}
+
+function writeDataToHandle($handle, $data) {
+    $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    if ($json === false) {
+        throw new RuntimeException('Unable to encode dashboard data');
+    }
+    rewind($handle);
+    if (!ftruncate($handle, 0) || fwrite($handle, $json) === false) {
+        throw new RuntimeException('Unable to save dashboard data');
+    }
+    fflush($handle);
+}
+
+function currentDataVersion($data) {
+    return max(1, (int)($data['data_version'] ?? 1));
+}
+
+function sendDataVersion($version) {
+    header('X-Data-Version: ' . $version);
+}
+
+/**
+ * Serialize a read-modify-write operation behind one file lock. This prevents
+ * two phones (or rapid taps) from overwriting each other's chore changes.
+ */
+function mutateData($mutator) {
+    global $DATA_FILE;
+    $handle = fopen($DATA_FILE, 'c+');
+    if (!$handle || !flock($handle, LOCK_EX)) {
+        http_response_code(503);
+        echo json_encode(['error' => 'dashboard data is busy']);
+        exit;
+    }
+
+    rewind($handle);
+    $json = stream_get_contents($handle);
+    $data = $json === '' ? getDefaultData() : json_decode($json, true);
+    if (!is_array($data)) {
+        flock($handle, LOCK_UN);
+        fclose($handle);
+        http_response_code(500);
+        echo json_encode(['error' => 'dashboard data is invalid']);
+        exit;
+    }
+
+    $version = currentDataVersion($data);
+    $clientVersion = isset($_SERVER['HTTP_X_DATA_VERSION'])
+        ? (int)$_SERVER['HTTP_X_DATA_VERSION']
+        : null;
+    if ($clientVersion !== null && $clientVersion !== $version) {
+        sendDataVersion($version);
+        flock($handle, LOCK_UN);
+        fclose($handle);
+        http_response_code(409);
+        echo json_encode(['error' => 'stale data', 'data_version' => $version]);
+        exit;
+    }
+
+    $result = $mutator($data);
+    $status = (int)($result['__status'] ?? 200);
+    unset($result['__status']);
+    if ($status >= 400) {
+        sendDataVersion($version);
+        flock($handle, LOCK_UN);
+        fclose($handle);
+        http_response_code($status);
+        echo json_encode($result);
+        exit;
+    }
+
+    $data['data_version'] = $version + 1;
+    writeDataToHandle($handle, $data);
+    sendDataVersion($data['data_version']);
+    flock($handle, LOCK_UN);
+    fclose($handle);
+    $result['data_version'] = $data['data_version'];
+    echo json_encode($result);
+    exit;
 }
 
 function today() {
@@ -58,6 +174,7 @@ function getDefaultData() {
             ['id' => 10, 'text' => 'The fruit of the Spirit is love, joy, peace, forbearance, kindness, goodness, faithfulness, gentleness and self-control.', 'ref' => 'Galatians 5:22-23'],
         ],
         'timer' => ['active' => false, 'end_time' => null, 'label' => ''],
+        'data_version' => 1,
         'nextId' => 100,
     ];
 }
@@ -74,6 +191,8 @@ if (empty($path)) $path = '/';
 // ============ DASHBOARD ============
 if ($path === '/dashboard' && $method === 'GET') {
     $data = loadData();
+    $dataVersion = currentDataVersion($data);
+    sendDataVersion($dataVersion);
     $d = today();
     $chores = $data['chores'][$d] ?? [];
     $schedule = $data['schedules'][$d] ?? [];
@@ -94,7 +213,7 @@ if ($path === '/dashboard' && $method === 'GET') {
         return array_merge($kid, ['chores' => $kidChores, 'done' => $done, 'total' => count($kidChores)]);
     }, $kidsData);
 
-    echo json_encode(['kids' => $kids, 'schedule' => $schedule, 'countdowns' => $data['countdowns'] ?? [], 'verse' => $verse, 'date' => $d]);
+    echo json_encode(['kids' => $kids, 'schedule' => $schedule, 'countdowns' => $data['countdowns'] ?? [], 'verse' => $verse, 'date' => $d, 'data_version' => $dataVersion]);
     exit;
 }
 
@@ -126,66 +245,61 @@ if ($path === '/chores' && $method === 'GET') {
 }
 
 if ($path === '/chores' && $method === 'POST') {
-    $data = loadData();
-    $d = $body['date'] ?? today();
-    if (!isset($data['chores'][$d])) $data['chores'][$d] = [];
-    $id = nextId($data);
-    $data['chores'][$d][] = ['id' => $id, 'kid_id' => $body['kid_id'], 'title' => $body['title'], 'emoji' => $body['emoji'] ?? '', 'done' => false];
-    saveData($data);
-    echo json_encode(['id' => $id]);
-    exit;
+    mutateData(function (&$data) use ($body) {
+        $d = $body['date'] ?? today();
+        if (!isset($data['chores'][$d])) $data['chores'][$d] = [];
+        $id = nextId($data);
+        $data['chores'][$d][] = ['id' => $id, 'kid_id' => $body['kid_id'], 'title' => trim($body['title']), 'emoji' => $body['emoji'] ?? '', 'done' => false];
+        return ['id' => $id];
+    });
 }
 
 if (preg_match('#^/chores/(\d+)$#', $path, $m) && $method === 'PUT') {
-    $data = loadData();
     $id = (int)$m[1];
     $d = $_GET['date'] ?? today();
-    if (isset($data['chores'][$d])) {
-        foreach ($data['chores'][$d] as &$chore) {
-            if ($chore['id'] === $id) {
-                if (isset($body['title'])) $chore['title'] = $body['title'];
-                if (isset($body['emoji'])) $chore['emoji'] = $body['emoji'];
-                if (isset($body['kid_id'])) $chore['kid_id'] = $body['kid_id'];
-                saveData($data);
-                echo json_encode($chore);
-                exit;
+    mutateData(function (&$data) use ($id, $d, $body) {
+        if (isset($data['chores'][$d])) {
+            foreach ($data['chores'][$d] as &$chore) {
+                if ($chore['id'] === $id) {
+                    if (isset($body['title'])) $chore['title'] = trim($body['title']);
+                    if (isset($body['emoji'])) $chore['emoji'] = $body['emoji'];
+                    if (isset($body['kid_id'])) $chore['kid_id'] = $body['kid_id'];
+                    return $chore;
+                }
             }
         }
-    }
-    http_response_code(404);
-    echo json_encode(['error' => 'not found']);
-    exit;
+        return ['__status' => 404, 'error' => 'not found'];
+    });
 }
 
 if (preg_match('#^/chores/(\d+)/toggle$#', $path, $m) && $method === 'PUT') {
-    $data = loadData();
     $id = (int)$m[1];
     $d = $_GET['date'] ?? today();
-    if (isset($data['chores'][$d])) {
-        foreach ($data['chores'][$d] as &$chore) {
-            if ($chore['id'] === $id) {
-                $chore['done'] = !$chore['done'];
-                saveData($data);
-                echo json_encode(['id' => $id, 'done' => $chore['done']]);
-                exit;
+    mutateData(function (&$data) use ($id, $d) {
+        if (isset($data['chores'][$d])) {
+            foreach ($data['chores'][$d] as &$chore) {
+                if ($chore['id'] === $id) {
+                    $chore['done'] = !$chore['done'];
+                    return ['id' => $id, 'done' => $chore['done']];
+                }
             }
         }
-    }
-    http_response_code(404);
-    echo json_encode(['error' => 'not found']);
-    exit;
+        return ['__status' => 404, 'error' => 'not found'];
+    });
 }
 
 if (preg_match('#^/chores/(\d+)$#', $path, $m) && $method === 'DELETE') {
-    $data = loadData();
     $id = (int)$m[1];
     $d = $_GET['date'] ?? today();
-    if (isset($data['chores'][$d])) {
-        $data['chores'][$d] = array_values(array_filter($data['chores'][$d], function($c) use ($id) { return $c['id'] !== $id; }));
-        saveData($data);
-    }
-    echo json_encode(['ok' => true]);
-    exit;
+    mutateData(function (&$data) use ($id, $d) {
+        $chores = $data['chores'][$d] ?? [];
+        $remaining = array_values(array_filter($chores, function($c) use ($id) { return $c['id'] !== $id; }));
+        if (count($remaining) === count($chores)) {
+            return ['__status' => 404, 'error' => 'not found'];
+        }
+        $data['chores'][$d] = $remaining;
+        return ['ok' => true];
+    });
 }
 
 // ============ SCHEDULE ============
