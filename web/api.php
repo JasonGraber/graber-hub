@@ -1,4 +1,5 @@
 <?php
+date_default_timezone_set('America/New_York');
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
@@ -217,7 +218,77 @@ function choreTemplateDueOnDate($template, $date) {
     return false;
 }
 
-/** Materialize due recurring chores once per template/date so they can be toggled and edited normally. */
+function normalizeChoreTitle($title) {
+    $title = trim((string)$title);
+    $normalized = preg_replace('/[^\p{L}\p{N}]+/u', ' ', $title);
+    if ($normalized === null) {
+        $normalized = preg_replace('/[^A-Za-z0-9]+/', ' ', $title);
+    }
+    $normalized = trim(preg_replace('/\s+/', ' ', (string)$normalized));
+    return function_exists('mb_strtolower')
+        ? mb_strtolower($normalized, 'UTF-8')
+        : strtolower($normalized);
+}
+
+function sameChoreIdentity($left, $right) {
+    if ((int)($left['kid_id'] ?? 0) !== (int)($right['kid_id'] ?? 0)) return false;
+    $leftTitle = normalizeChoreTitle($left['title'] ?? '');
+    $rightTitle = normalizeChoreTitle($right['title'] ?? '');
+    return $leftTitle !== '' && $leftTitle === $rightTitle;
+}
+
+function selectDashboardVerse($data) {
+    $verses = $data['verses'] ?? [];
+    if (!$verses) return null;
+
+    $activeVerseId = $data['active_verse_id'] ?? null;
+    if ($activeVerseId !== null) {
+        foreach ($verses as $verse) {
+            if ((int)($verse['id'] ?? 0) === (int)$activeVerseId) return $verse;
+        }
+    }
+
+    return $verses[(int)date('z') % count($verses)];
+}
+
+/** Move yesterday's unfinished chores into today, merging same-kid/same-title matches. */
+function rollOverUnfinishedChores(&$data, $date) {
+    if ($date !== today()) return false;
+
+    $target = DateTimeImmutable::createFromFormat('!Y-m-d', $date);
+    if (!$target) return false;
+    $previousDate = $target->modify('-1 day')->format('Y-m-d');
+    $previousChores = $data['chores'][$previousDate] ?? [];
+    if (!is_array($previousChores) || !$previousChores) return false;
+
+    $remaining = [];
+    $changed = false;
+    foreach ($previousChores as $chore) {
+        if (!empty($chore['done'])) {
+            $remaining[] = $chore;
+            continue;
+        }
+
+        $alreadyExists = false;
+        foreach ($data['chores'][$date] as $targetChore) {
+            if (sameChoreIdentity($targetChore, $chore)) {
+                $alreadyExists = true;
+                break;
+            }
+        }
+        if (!$alreadyExists) {
+            $data['chores'][$date][] = $chore;
+        }
+        $changed = true;
+    }
+
+    if ($changed) {
+        $data['chores'][$previousDate] = $remaining;
+    }
+    return $changed;
+}
+
+/** Materialize recurring chores and roll unfinished chores forward once, under one lock. */
 function loadDataWithRecurringChores($date) {
     global $DATA_FILE;
     $date = normalizeDate($date);
@@ -251,7 +322,10 @@ function loadDataWithRecurringChores($date) {
         if (!choreTemplateDueOnDate($template, $date)) continue;
         $alreadyExists = false;
         foreach ($data['chores'][$date] as $chore) {
-            if ((int)($chore['template_id'] ?? 0) === $template['id']) {
+            if (
+                (int)($chore['template_id'] ?? 0) === $template['id'] ||
+                sameChoreIdentity($chore, $template)
+            ) {
                 $alreadyExists = true;
                 break;
             }
@@ -265,6 +339,10 @@ function loadDataWithRecurringChores($date) {
             'done' => false,
             'template_id' => $template['id'],
         ];
+        $changed = true;
+    }
+
+    if (rollOverUnfinishedChores($data, $date)) {
         $changed = true;
     }
 
@@ -329,9 +407,7 @@ if ($path === '/dashboard' && $method === 'GET') {
     $chores = $data['chores'][$d] ?? [];
     $schedule = $data['schedules'][$d] ?? [];
 
-    $dayOfYear = date('z');
-    $verses = $data["verses"] ?? [];
-    $verse = count($verses) > 0 ? $verses[$dayOfYear % count($verses)] : null;
+    $verse = selectDashboardVerse($data);
 
     // Sort schedule by start time
     usort($schedule, function($a, $b) {
@@ -661,17 +737,90 @@ if ($path === '/timer' && $method === 'DELETE') {
 // ============ VERSES ============
 if ($path === '/verses' && $method === 'GET') {
     $data = loadData();
-    echo json_encode($data['verses']);
+    sendDataVersion(currentDataVersion($data));
+    echo json_encode($data['verses'] ?? []);
     exit;
 }
 
 if ($path === '/verses' && $method === 'POST') {
+    mutateData(function (&$data) use ($body) {
+        $text = trim((string)($body['text'] ?? ''));
+        $reference = trim((string)($body['reference'] ?? $body['ref'] ?? ''));
+        if ($text === '' || $reference === '') {
+            return ['__status' => 422, 'error' => 'text and reference are required'];
+        }
+        $id = nextId($data);
+        if (!isset($data['verses']) || !is_array($data['verses'])) $data['verses'] = [];
+        $data['verses'][] = ['id' => $id, 'text' => $text, 'ref' => $reference];
+        return ['success' => true, 'id' => $id];
+    });
+}
+
+if (preg_match('#^/verses/(\d+)$#', $path, $m) && $method === 'PUT') {
+    $id = (int)$m[1];
+    mutateData(function (&$data) use ($id, $body) {
+        if (!isset($data['verses']) || !is_array($data['verses'])) {
+            return ['__status' => 404, 'error' => 'not found'];
+        }
+        foreach ($data['verses'] as &$verse) {
+            if ((int)($verse['id'] ?? 0) !== $id) continue;
+            $text = trim((string)($body['text'] ?? $verse['text'] ?? ''));
+            $reference = trim((string)($body['reference'] ?? $body['ref'] ?? $verse['ref'] ?? ''));
+            if ($text === '' || $reference === '') {
+                return ['__status' => 422, 'error' => 'text and reference are required'];
+            }
+            $verse['text'] = $text;
+            $verse['ref'] = $reference;
+            return ['success' => true, 'id' => $id];
+        }
+        unset($verse);
+        return ['__status' => 404, 'error' => 'not found'];
+    });
+}
+
+if (preg_match('#^/verses/(\d+)$#', $path, $m) && $method === 'DELETE') {
+    $id = (int)$m[1];
+    mutateData(function (&$data) use ($id) {
+        $verses = $data['verses'] ?? [];
+        $remaining = array_values(array_filter($verses, function ($verse) use ($id) {
+            return (int)($verse['id'] ?? 0) !== $id;
+        }));
+        if (count($remaining) === count($verses)) {
+            return ['__status' => 404, 'error' => 'not found'];
+        }
+        $data['verses'] = $remaining;
+        if ((int)($data['active_verse_id'] ?? 0) === $id) {
+            $data['active_verse_id'] = null;
+        }
+        return ['success' => true];
+    });
+}
+
+if ($path === '/verses/active' && $method === 'GET') {
     $data = loadData();
-    $id = nextId($data);
-    $data['verses'][] = ['id' => $id, 'text' => $body['text'], 'ref' => $body['reference'] ?? $body['ref'] ?? ''];
-    saveData($data);
-    echo json_encode(['id' => $id]);
+    sendDataVersion(currentDataVersion($data));
+    echo json_encode(['active_verse_id' => $data['active_verse_id'] ?? null]);
     exit;
+}
+
+if (preg_match('#^/verses/active/(\d+)$#', $path, $m) && $method === 'PUT') {
+    $id = (int)$m[1];
+    mutateData(function (&$data) use ($id) {
+        foreach (($data['verses'] ?? []) as $verse) {
+            if ((int)($verse['id'] ?? 0) === $id) {
+                $data['active_verse_id'] = $id;
+                return ['success' => true, 'id' => $id];
+            }
+        }
+        return ['__status' => 404, 'error' => 'not found'];
+    });
+}
+
+if ($path === '/verses/active' && $method === 'DELETE') {
+    mutateData(function (&$data) {
+        $data['active_verse_id'] = null;
+        return ['success' => true];
+    });
 }
 
 // ============ DISPLAY MODE ============
@@ -722,9 +871,7 @@ if ($path === '/heartbeat' && $method === 'GET') {
     sendDataVersion($dataVersion);
     $chores = $data['chores'][$d] ?? [];
     $schedule = $data['schedules'][$d] ?? [];
-    $verses = $data['verses'] ?? [];
-    $dayOfYear = date('z');
-    $verse = count($verses) > 0 ? $verses[$dayOfYear % count($verses)] : null;
+    $verse = selectDashboardVerse($data);
 
     usort($schedule, function($a, $b) {
         return strcmp($a['time_start'], $b['time_start']);
