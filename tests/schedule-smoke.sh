@@ -20,6 +20,14 @@ done
 
 headers="$test_dir/headers"
 body="$test_dir/body"
+
+curl -fsS -D "$headers" -o "$body" "$base_url/heartbeat"
+heartbeat_version=$(awk 'tolower($1) == "x-data-version:" {gsub("\\r", "", $2); print $2}' "$headers")
+test -n "$heartbeat_version"
+jq -e --argjson version "$heartbeat_version" \
+    '.dashboard.data_version == $version and (.dashboard.kids | type) == "array" and (.dashboard.schedule | type) == "array" and (.timer.active | type) == "boolean" and (.photoSettings | type) == "object"' \
+    "$body" >/dev/null
+
 curl -fsS -D "$headers" -o "$body" "$base_url/schedule?date=2099-01-01"
 version=$(awk 'tolower($1) == "x-data-version:" {gsub("\\r", "", $2); print $2}' "$headers")
 test -n "$version"

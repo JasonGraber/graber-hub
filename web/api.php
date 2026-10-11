@@ -718,6 +718,8 @@ if ($path === "/photo-settings" && $method === "POST") {
 if ($path === '/heartbeat' && $method === 'GET') {
     $d = today();
     $data = loadDataWithRecurringChores($d);
+    $dataVersion = currentDataVersion($data);
+    sendDataVersion($dataVersion);
     $chores = $data['chores'][$d] ?? [];
     $schedule = $data['schedules'][$d] ?? [];
     $verses = $data['verses'] ?? [];
@@ -754,7 +756,7 @@ if ($path === '/heartbeat' && $method === 'GET') {
     }
 
     echo json_encode([
-        'dashboard' => ['kids' => $kids, 'schedule' => $schedule, 'countdowns' => $data['countdowns'] ?? [], 'verse' => $verse, 'date' => $d],
+        'dashboard' => ['kids' => $kids, 'schedule' => $schedule, 'countdowns' => $data['countdowns'] ?? [], 'verse' => $verse, 'date' => $d, 'data_version' => $dataVersion],
         'timer' => $timer,
         'mode' => $resolvedMode,
         'rawMode' => $mode,
