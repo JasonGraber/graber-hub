@@ -495,7 +495,8 @@ if (preg_match('#^/chore-templates/(\d+)$#', $path, $m) && $method === 'DELETE')
 // ============ SCHEDULE ============
 if ($path === '/schedule' && $method === 'GET') {
     $data = loadData();
-    $d = $_GET['date'] ?? today();
+    sendDataVersion(currentDataVersion($data));
+    $d = normalizeDate($_GET['date'] ?? '', today());
     $sched = $data['schedules'][$d] ?? [];
     usort($sched, function($a, $b) { return strcmp($a['time_start'], $b['time_start']); });
     echo json_encode($sched);
@@ -503,75 +504,87 @@ if ($path === '/schedule' && $method === 'GET') {
 }
 
 if ($path === '/schedule' && $method === 'POST') {
-    $data = loadData();
-    $d = $body['date'] ?? today();
-    if (!isset($data['schedules'][$d])) $data['schedules'][$d] = [];
-    $id = nextId($data);
-    $data['schedules'][$d][] = [
-        'id' => $id,
-        'time_start' => $body['time_start'],
-        'time_end' => $body['time_end'] ?? '',
-        'title' => $body['title'],
-        'emoji' => $body['emoji'] ?? '',
-        'sort' => $body['sort'] ?? count($data['schedules'][$d]),
-    ];
-    usort($data['schedules'][$d], function($a, $b) { return $a['sort'] - $b['sort']; });
-    saveData($data);
-    echo json_encode(['id' => $id]);
-    exit;
+    mutateData(function (&$data) use ($body) {
+        $d = normalizeDate($body['date'] ?? '', today());
+        $title = trim((string)($body['title'] ?? ''));
+        $timeStart = trim((string)($body['time_start'] ?? ''));
+        if ($title === '' || $timeStart === '') {
+            return ['__status' => 422, 'error' => 'title and time_start are required'];
+        }
+        if (!isset($data['schedules'][$d])) $data['schedules'][$d] = [];
+        $id = nextId($data);
+        $data['schedules'][$d][] = [
+            'id' => $id,
+            'time_start' => $timeStart,
+            'time_end' => trim((string)($body['time_end'] ?? '')),
+            'title' => $title,
+            'emoji' => $body['emoji'] ?? '',
+            'sort' => $body['sort'] ?? count($data['schedules'][$d]),
+        ];
+        usort($data['schedules'][$d], function($a, $b) { return $a['sort'] - $b['sort']; });
+        return ['id' => $id];
+    });
 }
 
 if ($path === '/schedule/template' && $method === 'POST') {
-    $data = loadData();
-    $d = $body['date'] ?? today();
-    $data['schedules'][$d] = [];
-    foreach ($body['blocks'] as $i => $b) {
-        $data['schedules'][$d][] = [
-            'id' => nextId($data),
-            'time_start' => $b['time_start'],
-            'time_end' => $b['time_end'] ?? '',
-            'title' => $b['title'],
-            'emoji' => $b['emoji'] ?? '',
-            'sort' => $i,
-        ];
-    }
-    saveData($data);
-    echo json_encode(['ok' => true, 'count' => count($body['blocks'])]);
-    exit;
+    mutateData(function (&$data) use ($body) {
+        $d = normalizeDate($body['date'] ?? '', today());
+        $blocks = $body['blocks'] ?? null;
+        if (!is_array($blocks)) {
+            return ['__status' => 422, 'error' => 'blocks must be an array'];
+        }
+        $replacement = [];
+        foreach ($blocks as $i => $b) {
+            $title = trim((string)($b['title'] ?? ''));
+            $timeStart = trim((string)($b['time_start'] ?? ''));
+            if ($title === '' || $timeStart === '') {
+                return ['__status' => 422, 'error' => 'every block requires title and time_start'];
+            }
+            $replacement[] = [
+                'id' => nextId($data),
+                'time_start' => $timeStart,
+                'time_end' => trim((string)($b['time_end'] ?? '')),
+                'title' => $title,
+                'emoji' => $b['emoji'] ?? '',
+                'sort' => $i,
+            ];
+        }
+        $data['schedules'][$d] = $replacement;
+        return ['ok' => true, 'count' => count($replacement)];
+    });
 }
 
 if (preg_match('#^/schedule/(\d+)$#', $path, $m) && $method === 'PUT') {
-    $data = loadData();
     $id = (int)$m[1];
-    $d = $_GET['date'] ?? today();
-    if (isset($data['schedules'][$d])) {
-        foreach ($data['schedules'][$d] as &$block) {
-            if ($block['id'] === $id) {
-                if (isset($body['title'])) $block['title'] = $body['title'];
-                if (isset($body['emoji'])) $block['emoji'] = $body['emoji'];
-                if (isset($body['time_start'])) $block['time_start'] = $body['time_start'];
-                if (isset($body['time_end'])) $block['time_end'] = $body['time_end'];
-                saveData($data);
-                echo json_encode($block);
-                exit;
+    $d = normalizeDate($_GET['date'] ?? '', today());
+    mutateData(function (&$data) use ($id, $d, $body) {
+        if (isset($data['schedules'][$d])) {
+            foreach ($data['schedules'][$d] as &$block) {
+                if ($block['id'] === $id) {
+                    if (isset($body['title'])) $block['title'] = trim((string)$body['title']);
+                    if (isset($body['emoji'])) $block['emoji'] = $body['emoji'];
+                    if (isset($body['time_start'])) $block['time_start'] = trim((string)$body['time_start']);
+                    if (isset($body['time_end'])) $block['time_end'] = trim((string)$body['time_end']);
+                    return $block;
+                }
             }
         }
-    }
-    http_response_code(404);
-    echo json_encode(['error' => 'not found']);
-    exit;
+        return ['__status' => 404, 'error' => 'not found'];
+    });
 }
 
 if (preg_match('#^/schedule/(\d+)$#', $path, $m) && $method === 'DELETE') {
-    $data = loadData();
     $id = (int)$m[1];
-    $d = $_GET['date'] ?? today();
-    if (isset($data['schedules'][$d])) {
-        $data['schedules'][$d] = array_values(array_filter($data['schedules'][$d], function($s) use ($id) { return $s['id'] !== $id; }));
-        saveData($data);
-    }
-    echo json_encode(['ok' => true]);
-    exit;
+    $d = normalizeDate($_GET['date'] ?? '', today());
+    mutateData(function (&$data) use ($id, $d) {
+        $schedule = $data['schedules'][$d] ?? [];
+        $remaining = array_values(array_filter($schedule, function($s) use ($id) { return $s['id'] !== $id; }));
+        if (count($remaining) === count($schedule)) {
+            return ['__status' => 404, 'error' => 'not found'];
+        }
+        $data['schedules'][$d] = $remaining;
+        return ['ok' => true];
+    });
 }
 
 // ============ COUNTDOWNS ============
