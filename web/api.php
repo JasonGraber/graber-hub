@@ -823,6 +823,69 @@ if ($path === '/verses/active' && $method === 'DELETE') {
     });
 }
 
+// ============ WEATHER ============
+if ($path === '/weather' && $method === 'GET') {
+    $weatherUrl = getenv('GRABER_HUB_WEATHER_URL') ?: 'https://api.open-meteo.com/v1/forecast?latitude=27.3364&longitude=-82.5307&current=temperature_2m,weather_code&temperature_unit=fahrenheit&timezone=America%2FNew_York';
+    $cacheFile = getenv('GRABER_HUB_WEATHER_CACHE_FILE') ?: '/home/pi/graber-hub/weather-cache.json';
+    $responseBody = null;
+    $status = 0;
+
+    if (function_exists('curl_init')) {
+        $ch = curl_init($weatherUrl);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 4,
+            CURLOPT_TIMEOUT => 8,
+            CURLOPT_USERAGENT => 'GraberHub/1.0',
+        ]);
+        $responseBody = curl_exec($ch);
+        $status = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+    }
+
+    $weather = is_string($responseBody) ? json_decode($responseBody, true) : null;
+    $current = is_array($weather) ? ($weather['current'] ?? null) : null;
+    if (($status === 200 || $status === 0) && is_array($current) && is_numeric($current['temperature_2m'] ?? null) && is_numeric($current['weather_code'] ?? null)) {
+        $code = (int)$current['weather_code'];
+        $description = 'Clear';
+        $icon = '☀️';
+        if ($code === 1) { $description = 'Mainly clear'; $icon = '🌤️'; }
+        elseif ($code === 2) { $description = 'Partly cloudy'; $icon = '⛅'; }
+        elseif ($code === 3) { $description = 'Overcast'; $icon = '☁️'; }
+        elseif (in_array($code, [45, 48], true)) { $description = 'Foggy'; $icon = '🌫️'; }
+        elseif ($code >= 51 && $code <= 57) { $description = 'Drizzle'; $icon = '🌦️'; }
+        elseif (($code >= 61 && $code <= 67) || ($code >= 80 && $code <= 82)) { $description = 'Rain'; $icon = '🌧️'; }
+        elseif (($code >= 71 && $code <= 77) || ($code >= 85 && $code <= 86)) { $description = 'Snow'; $icon = '🌨️'; }
+        elseif ($code >= 95) { $description = 'Thunderstorms'; $icon = '⛈️'; }
+
+        $payload = [
+            'temperature_f' => (int)round((float)$current['temperature_2m']),
+            'weather_code' => $code,
+            'description' => $description,
+            'icon' => $icon,
+            'location' => 'Sarasota, FL',
+            'observed_at' => $current['time'] ?? null,
+            'stale' => false,
+        ];
+        @file_put_contents($cacheFile, json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), LOCK_EX);
+        echo json_encode($payload);
+        exit;
+    }
+
+    if (is_file($cacheFile)) {
+        $cached = json_decode((string)file_get_contents($cacheFile), true);
+        if (is_array($cached) && is_numeric($cached['temperature_f'] ?? null)) {
+            $cached['stale'] = true;
+            echo json_encode($cached);
+            exit;
+        }
+    }
+
+    http_response_code(502);
+    echo json_encode(['error' => 'weather unavailable']);
+    exit;
+}
+
 // ============ DISPLAY MODE ============
 if ($path === '/mode' && $method === 'GET') {
     $settingsFile = '/home/pi/graber-hub/photo-settings.json';

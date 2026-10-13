@@ -803,24 +803,28 @@
     // ============ WEATHER ============
     function fetchWeather() {
       var xhr = new XMLHttpRequest();
-      xhr.open("GET", "https://wttr.in/Sarasota,FL?format=j1");
+      xhr.open("GET", "api.php/weather");
+      xhr.timeout = 10000;
       xhr.onload = function() {
         try {
+          if (xhr.status < 200 || xhr.status >= 300) throw new Error("Weather HTTP " + xhr.status);
           var data = JSON.parse(xhr.responseText);
-          var c = data.current_condition[0];
-          document.getElementById("w-temp").textContent = c.temp_F + "\u00B0";
-          document.getElementById("w-desc").textContent = c.weatherDesc[0].value;
-          var code = parseInt(c.weatherCode);
-          var icon = "\u2600\uFE0F";
-          if (code > 113 && code <= 116) icon = "\u26C5";
-          if (code >= 119 && code <= 122) icon = "\u2601\uFE0F";
-          if (code >= 176) icon = "\uD83C\uDF27\uFE0F";
-          document.getElementById("w-icon").textContent = icon;
+          if (typeof data.temperature_f !== "number") throw new Error("Missing temperature");
+          document.getElementById("w-temp").textContent = Math.round(data.temperature_f) + "\u00B0";
+          document.getElementById("w-desc").textContent = data.description || "Current conditions";
+          document.getElementById("w-icon").textContent = data.icon || "\u2600\uFE0F";
+          if (data.location) document.getElementById("w-location").textContent = data.location;
         } catch(e) {
+          document.getElementById("w-temp").textContent = "--\u00B0";
+          document.getElementById("w-icon").textContent = "";
           document.getElementById("w-desc").textContent = "Unavailable";
         }
       };
-      xhr.onerror = function() { document.getElementById("w-desc").textContent = "Unavailable"; };
+      xhr.onerror = xhr.ontimeout = function() {
+        document.getElementById("w-temp").textContent = "--\u00B0";
+        document.getElementById("w-icon").textContent = "";
+        document.getElementById("w-desc").textContent = "Unavailable";
+      };
       xhr.send();
     }
 
