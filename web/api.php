@@ -8,6 +8,10 @@ header('Access-Control-Expose-Headers: X-Data-Version');
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(200); exit; }
 
 $DATA_FILE = getenv('GRABER_HUB_DATA_FILE') ?: '/home/pi/graber-hub/data.json';
+$PHOTO_SETTINGS_FILE = getenv('GRABER_HUB_PHOTO_SETTINGS_FILE') ?: '/home/pi/graber-hub/photo-settings.json';
+$PHOTO_UPLOAD_DIR = getenv('GRABER_HUB_UPLOAD_DIR') ?: '/var/www/html/uploads';
+$PHOTO_METADATA_FILE = getenv('GRABER_HUB_PHOTOS_FILE') ?: '/home/pi/graber-hub/photos.json';
+$MAX_UPLOADED_PHOTOS = max(1, (int)(getenv('GRABER_HUB_MAX_PHOTOS') ?: 50));
 
 function loadData() {
     global $DATA_FILE;
@@ -78,6 +82,111 @@ function currentDataVersion($data) {
 
 function sendDataVersion($version) {
     header('X-Data-Version: ' . $version);
+}
+
+function defaultPhotoSettings() {
+    return [
+        'album_url' => '',
+        'mode' => 'dashboard',
+        'transition_seconds' => 30,
+        'auto_schedule' => ['photos_start' => '20:00', 'photos_end' => '07:00'],
+        'show_clock' => true,
+        'show_weather' => true,
+        'show_date' => true,
+        'ken_burns' => true,
+        'photo_source' => 'uploaded',
+    ];
+}
+
+function loadPhotoSettingsFile() {
+    global $PHOTO_SETTINGS_FILE;
+    if (!is_file($PHOTO_SETTINGS_FILE)) return defaultPhotoSettings();
+    $handle = fopen($PHOTO_SETTINGS_FILE, 'r');
+    if (!$handle || !flock($handle, LOCK_SH)) return defaultPhotoSettings();
+    $decoded = json_decode((string)stream_get_contents($handle), true);
+    flock($handle, LOCK_UN);
+    fclose($handle);
+    return array_replace_recursive(defaultPhotoSettings(), is_array($decoded) ? $decoded : []);
+}
+
+function updatePhotoSettingsFile($updates) {
+    global $PHOTO_SETTINGS_FILE;
+    $handle = fopen($PHOTO_SETTINGS_FILE, 'c+');
+    if (!$handle || !flock($handle, LOCK_EX)) {
+        throw new RuntimeException('Unable to lock photo settings');
+    }
+    rewind($handle);
+    $decoded = json_decode((string)stream_get_contents($handle), true);
+    $settings = array_replace_recursive(defaultPhotoSettings(), is_array($decoded) ? $decoded : []);
+    foreach ($updates as $key => $value) {
+        $settings[$key] = $value;
+    }
+    writeDataToHandle($handle, $settings);
+    flock($handle, LOCK_UN);
+    fclose($handle);
+    return $settings;
+}
+
+function loadPhotoMetadata() {
+    global $PHOTO_METADATA_FILE;
+    if (!is_file($PHOTO_METADATA_FILE)) return [];
+    $handle = fopen($PHOTO_METADATA_FILE, 'r');
+    if (!$handle || !flock($handle, LOCK_SH)) return [];
+    $decoded = json_decode((string)stream_get_contents($handle), true);
+    flock($handle, LOCK_UN);
+    fclose($handle);
+    return is_array($decoded) ? $decoded : [];
+}
+
+function mutatePhotoMetadata($mutator) {
+    global $PHOTO_METADATA_FILE;
+    $handle = fopen($PHOTO_METADATA_FILE, 'c+');
+    if (!$handle || !flock($handle, LOCK_EX)) {
+        return ['__status' => 503, 'error' => 'photo library is busy'];
+    }
+    rewind($handle);
+    $decoded = json_decode((string)stream_get_contents($handle), true);
+    $metadata = is_array($decoded) ? $decoded : [];
+    $result = $mutator($metadata);
+    $status = (int)($result['__status'] ?? 200);
+    if ($status < 400) writeDataToHandle($handle, $metadata);
+    flock($handle, LOCK_UN);
+    fclose($handle);
+    return $result;
+}
+
+function safePhotoFilename($value) {
+    $decoded = rawurldecode((string)$value);
+    if ($decoded === '' || basename($decoded) !== $decoded) return null;
+    return preg_match('/^[A-Za-z0-9._-]+$/', $decoded) ? $decoded : null;
+}
+
+function listUploadedPhotos() {
+    global $PHOTO_UPLOAD_DIR;
+    $metadata = loadPhotoMetadata();
+    $byFilename = [];
+    foreach ($metadata as $record) {
+        if (isset($record['filename'])) $byFilename[$record['filename']] = $record;
+    }
+    $photos = [];
+    foreach (glob(rtrim($PHOTO_UPLOAD_DIR, '/') . '/*') ?: [] as $path) {
+        if (!is_file($path)) continue;
+        $filename = basename($path);
+        if (!preg_match('/\.(jpe?g|png|webp)$/i', $filename)) continue;
+        $record = $byFilename[$filename] ?? [];
+        $photos[] = [
+            'filename' => $filename,
+            'name' => (string)($record['name'] ?? ''),
+            'url' => '/uploads/' . rawurlencode($filename),
+            'size' => (int)filesize($path),
+            'modified' => date('c', (int)filemtime($path)),
+            'uploaded' => $record['uploaded'] ?? date('c', (int)filemtime($path)),
+        ];
+    }
+    usort($photos, function ($a, $b) {
+        return strcmp((string)$a['uploaded'], (string)$b['uploaded']);
+    });
+    return $photos;
 }
 
 /**
@@ -888,42 +997,152 @@ if ($path === '/weather' && $method === 'GET') {
 
 // ============ DISPLAY MODE ============
 if ($path === '/mode' && $method === 'GET') {
-    $settingsFile = '/home/pi/graber-hub/photo-settings.json';
-    $settings = file_exists($settingsFile) ? json_decode(file_get_contents($settingsFile), true) : ['mode' => 'dashboard'];
+    $settings = loadPhotoSettingsFile();
     echo json_encode(['mode' => $settings['mode'] ?? 'dashboard']);
     exit;
 }
 
 if ($path === '/mode' && $method === 'POST') {
-    $settingsFile = '/home/pi/graber-hub/photo-settings.json';
-    $settings = file_exists($settingsFile) ? json_decode(file_get_contents($settingsFile), true) : ['mode' => 'dashboard'];
-    if (isset($body['mode'])) {
-        $settings['mode'] = $body['mode'];
-        file_put_contents($settingsFile, json_encode($settings, JSON_PRETTY_PRINT));
-    }
+    $mode = in_array(($body['mode'] ?? ''), ['dashboard', 'photos', 'auto'], true)
+        ? $body['mode']
+        : 'dashboard';
+    $settings = updatePhotoSettingsFile(['mode' => $mode]);
     echo json_encode(['mode' => $settings['mode']]);
     exit;
 }
 
-
 if ($path === "/photo-settings" && $method === "GET") {
-    $settingsFile = "/home/pi/graber-hub/photo-settings.json";
-    $settings = file_exists($settingsFile) ? json_decode(file_get_contents($settingsFile), true) : [];
-    echo json_encode($settings);
+    echo json_encode(loadPhotoSettingsFile());
     exit;
 }
 
 if ($path === "/photo-settings" && $method === "POST") {
-    $settingsFile = "/home/pi/graber-hub/photo-settings.json";
-    $settings = file_exists($settingsFile) ? json_decode(file_get_contents($settingsFile), true) : [];
-    if (isset($body["album_url"])) $settings["album_url"] = $body["album_url"];
-    if (isset($body["mode"])) $settings["mode"] = $body["mode"];
-    if (isset($body["transition_seconds"])) $settings["transition_seconds"] = $body["transition_seconds"];
-    if (isset($body["show_clock"])) $settings["show_clock"] = $body["show_clock"];
-    if (isset($body["show_weather"])) $settings["show_weather"] = $body["show_weather"];
-    if (isset($body["ken_burns"])) $settings["ken_burns"] = $body["ken_burns"];
-    file_put_contents($settingsFile, json_encode($settings, JSON_PRETTY_PRINT));
+    $updates = [];
+    if (isset($body['album_url'])) $updates['album_url'] = trim((string)$body['album_url']);
+    if (isset($body['mode']) && in_array($body['mode'], ['dashboard', 'photos', 'auto'], true)) $updates['mode'] = $body['mode'];
+    if (isset($body['photo_source']) && in_array($body['photo_source'], ['uploaded', 'google'], true)) $updates['photo_source'] = $body['photo_source'];
+    if (isset($body['transition_seconds'])) $updates['transition_seconds'] = max(5, min(3600, (int)$body['transition_seconds']));
+    foreach (['show_clock', 'show_weather', 'show_date', 'ken_burns'] as $key) {
+        if (isset($body[$key])) $updates[$key] = (bool)$body[$key];
+    }
+    if (isset($body['auto_schedule']) && is_array($body['auto_schedule'])) {
+        $current = loadPhotoSettingsFile()['auto_schedule'];
+        if (isset($body['auto_schedule']['photos_start'])) $current['photos_start'] = (string)$body['auto_schedule']['photos_start'];
+        if (isset($body['auto_schedule']['photos_end'])) $current['photos_end'] = (string)$body['auto_schedule']['photos_end'];
+        $updates['auto_schedule'] = $current;
+    }
+    $settings = updatePhotoSettingsFile($updates);
     echo json_encode($settings);
+    exit;
+}
+
+// ============ UPLOADED PHOTOS ============
+if ($path === '/photos' && $method === 'GET') {
+    echo json_encode(listUploadedPhotos());
+    exit;
+}
+
+if ($path === '/photos' && $method === 'POST') {
+    global $PHOTO_UPLOAD_DIR, $MAX_UPLOADED_PHOTOS;
+    $upload = $_FILES['photo'] ?? null;
+    if (!is_array($upload) || (int)($upload['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        http_response_code(422);
+        echo json_encode(['error' => 'photo file is required']);
+        exit;
+    }
+    $size = (int)($upload['size'] ?? 0);
+    if ($size <= 0 || $size > 15 * 1024 * 1024) {
+        http_response_code(413);
+        echo json_encode(['error' => 'photo must be 15 MB or smaller']);
+        exit;
+    }
+    $mime = function_exists('finfo_open')
+        ? finfo_file(finfo_open(FILEINFO_MIME_TYPE), $upload['tmp_name'])
+        : mime_content_type($upload['tmp_name']);
+    $extensions = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp'];
+    if (!isset($extensions[$mime]) || @getimagesize($upload['tmp_name']) === false) {
+        http_response_code(415);
+        echo json_encode(['error' => 'only JPEG, PNG, and WebP images are supported']);
+        exit;
+    }
+    if (!is_dir($PHOTO_UPLOAD_DIR) && !mkdir($PHOTO_UPLOAD_DIR, 0775, true)) {
+        http_response_code(500);
+        echo json_encode(['error' => 'upload directory is unavailable']);
+        exit;
+    }
+    $filename = 'photo-' . time() . '-' . bin2hex(random_bytes(4)) . '.' . $extensions[$mime];
+    $target = rtrim($PHOTO_UPLOAD_DIR, '/') . '/' . $filename;
+    $displayName = trim((string)($_POST['name'] ?? ''));
+    if (strlen($displayName) > 100) $displayName = substr($displayName, 0, 100);
+    $result = mutatePhotoMetadata(function (&$metadata) use ($upload, $target, $filename, $displayName, $size, $PHOTO_UPLOAD_DIR, $MAX_UPLOADED_PHOTOS) {
+        $existingFiles = array_values(array_filter(glob(rtrim($PHOTO_UPLOAD_DIR, '/') . '/*') ?: [], 'is_file'));
+        if (count($existingFiles) >= $MAX_UPLOADED_PHOTOS) {
+            return ['__status' => 409, 'error' => 'photo library is full'];
+        }
+        if (!move_uploaded_file($upload['tmp_name'], $target)) {
+            return ['__status' => 500, 'error' => 'unable to save photo'];
+        }
+        $metadata[] = [
+            'filename' => $filename,
+            'name' => $displayName,
+            'uploaded' => date('c'),
+            'size' => $size,
+        ];
+        return ['success' => true, 'filename' => $filename];
+    });
+    $status = (int)($result['__status'] ?? 200);
+    unset($result['__status']);
+    http_response_code($status);
+    echo json_encode($result);
+    exit;
+}
+
+if (preg_match('#^/photos/([^/]+)$#', $path, $m) && $method === 'PUT') {
+    global $PHOTO_UPLOAD_DIR;
+    $filename = safePhotoFilename($m[1]);
+    $name = trim((string)($body['name'] ?? ''));
+    if ($name !== '' && strlen($name) > 100) $name = substr($name, 0, 100);
+    if ($filename === null || !is_file(rtrim($PHOTO_UPLOAD_DIR, '/') . '/' . $filename)) {
+        http_response_code(404);
+        echo json_encode(['error' => 'photo not found']);
+        exit;
+    }
+    $result = mutatePhotoMetadata(function (&$metadata) use ($filename, $name) {
+        foreach ($metadata as &$record) {
+            if (($record['filename'] ?? '') !== $filename) continue;
+            $record['name'] = $name;
+            return ['success' => true];
+        }
+        $metadata[] = ['filename' => $filename, 'name' => $name, 'uploaded' => date('c')];
+        return ['success' => true];
+    });
+    $status = (int)($result['__status'] ?? 200);
+    unset($result['__status']);
+    http_response_code($status);
+    echo json_encode($result);
+    exit;
+}
+
+if (preg_match('#^/photos/([^/]+)$#', $path, $m) && $method === 'DELETE') {
+    global $PHOTO_UPLOAD_DIR;
+    $filename = safePhotoFilename($m[1]);
+    $target = $filename === null ? null : rtrim($PHOTO_UPLOAD_DIR, '/') . '/' . $filename;
+    if ($target === null || !is_file($target)) {
+        http_response_code(404);
+        echo json_encode(['error' => 'photo not found']);
+        exit;
+    }
+    $result = mutatePhotoMetadata(function (&$metadata) use ($filename, $target) {
+        if (!unlink($target)) return ['__status' => 500, 'error' => 'unable to delete photo'];
+        $metadata = array_values(array_filter($metadata, function ($record) use ($filename) {
+            return ($record['filename'] ?? '') !== $filename;
+        }));
+        return ['success' => true];
+    });
+    $status = (int)($result['__status'] ?? 200);
+    unset($result['__status']);
+    http_response_code($status);
+    echo json_encode($result);
     exit;
 }
 // ============ HEARTBEAT (combined endpoint) ============
@@ -949,8 +1168,7 @@ if ($path === '/heartbeat' && $method === 'GET') {
 
     $timer = $data['timer'] ?? ['active' => false, 'end_time' => null, 'label' => ''];
 
-    $settingsFile = '/home/pi/graber-hub/photo-settings.json';
-    $photoSettings = file_exists($settingsFile) ? json_decode(file_get_contents($settingsFile), true) : ['mode' => 'dashboard'];
+    $photoSettings = loadPhotoSettingsFile();
     $mode = $photoSettings['mode'] ?? 'dashboard';
     if ($mode === 'auto') {
         $now = date('H:i');

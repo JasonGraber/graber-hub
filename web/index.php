@@ -1267,6 +1267,7 @@
     var modeLabels = { dashboard: "Dashboard", photos: "Photos", auto: "Auto" };
     var modeIcons = { dashboard: "\uD83D\uDDA5\uFE0F", photos: "\uD83D\uDCF7", auto: "\u2728" };
     var currentDisplayMode = "dashboard";
+    var currentPhotoSource = null;
 
     function updateModeIndicator(mode) {
       var el = document.getElementById("mode-indicator");
@@ -1288,7 +1289,9 @@
           // Update mode indicator with raw setting (before auto resolution)
           var rawMode = (data.settings && data.settings.mode) ? data.settings.mode : "dashboard";
           updateModeIndicator(rawMode);
-          if (data.mode === "photos" && !photoFrameActive) {
+          var requestedSource = (data.settings && data.settings.photo_source) || "uploaded";
+          if (data.mode === "photos" && (!photoFrameActive || requestedSource !== currentPhotoSource)) {
+            if (photoFrameActive) stopPhotoFrame();
             startPhotoFrame(data.settings);
           } else if (data.mode === "dashboard" && photoFrameActive) {
             stopPhotoFrame();
@@ -1302,6 +1305,7 @@
     }
 
     function startPhotoFrame(settings) {
+      currentPhotoSource = (settings && settings.photo_source) || "uploaded";
       // Fetch photo list first
       var xhr = new XMLHttpRequest();
       xhr.open("GET", "/photos.php/list");
@@ -1325,11 +1329,14 @@
 
     function stopPhotoFrame() {
       photoFrameActive = false;
+      currentPhotoSource = null;
       document.getElementById("photo-frame").classList.remove("active");
       if (photoInterval) { clearInterval(photoInterval); photoInterval = null; }
     }
 
     function getPhotoUrl(baseUrl, size) {
+      // Uploaded photos are already served at their final local URL.
+      if (baseUrl.indexOf("googleusercontent.com") === -1) return baseUrl;
       // Strip existing size params and add new one
       var clean = baseUrl.replace(/=[whsm]\d+.*$/, "");
       return clean + "=" + size;
@@ -1478,7 +1485,9 @@
           // Display mode
           var rawMode = data.rawMode || "dashboard";
           updateModeIndicator(rawMode);
-          if (data.mode === "photos" && !photoFrameActive) {
+          var requestedSource = (data.photoSettings && data.photoSettings.photo_source) || "uploaded";
+          if (data.mode === "photos" && (!photoFrameActive || requestedSource !== currentPhotoSource)) {
+            if (photoFrameActive) stopPhotoFrame();
             startPhotoFrame(data.photoSettings);
           } else if (data.mode === "dashboard" && photoFrameActive) {
             stopPhotoFrame();

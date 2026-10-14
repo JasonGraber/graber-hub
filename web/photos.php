@@ -17,8 +17,10 @@ header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type');
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(200); exit; }
 
-$SETTINGS_FILE = '/home/pi/graber-hub/photo-settings.json';
-$CACHE_FILE = '/home/pi/graber-hub/photo-cache.json';
+$SETTINGS_FILE = getenv('GRABER_HUB_PHOTO_SETTINGS_FILE') ?: '/home/pi/graber-hub/photo-settings.json';
+$CACHE_FILE = getenv('GRABER_HUB_PHOTO_CACHE_FILE') ?: '/home/pi/graber-hub/photo-cache.json';
+$UPLOAD_DIR = getenv('GRABER_HUB_UPLOAD_DIR') ?: '/var/www/html/uploads';
+$PHOTO_METADATA_FILE = getenv('GRABER_HUB_PHOTOS_FILE') ?: '/home/pi/graber-hub/photos.json';
 $CACHE_MAX_AGE = 3600; // Re-fetch album every hour
 
 function loadSettings() {
@@ -36,11 +38,23 @@ function loadSettings() {
             'show_weather' => true,
             'show_date' => true,
             'ken_burns' => true,
+            'photo_source' => 'uploaded',
         ];
         file_put_contents($SETTINGS_FILE, json_encode($defaults, JSON_PRETTY_PRINT));
         return $defaults;
     }
-    return json_decode(file_get_contents($SETTINGS_FILE), true);
+    $saved = json_decode(file_get_contents($SETTINGS_FILE), true);
+    return array_replace_recursive([
+        'album_url' => '',
+        'mode' => 'dashboard',
+        'transition_seconds' => 30,
+        'auto_schedule' => ['photos_start' => '20:00', 'photos_end' => '07:00'],
+        'show_clock' => true,
+        'show_weather' => true,
+        'show_date' => true,
+        'ken_burns' => true,
+        'photo_source' => 'uploaded',
+    ], is_array($saved) ? $saved : []);
 }
 
 function saveSettings($settings) {
@@ -57,6 +71,35 @@ function loadCache() {
 function saveCache($data) {
     global $CACHE_FILE;
     file_put_contents($CACHE_FILE, json_encode($data, JSON_PRETTY_PRINT));
+}
+
+function loadUploadedPhotos() {
+    global $UPLOAD_DIR, $PHOTO_METADATA_FILE;
+    $metadata = [];
+    if (is_file($PHOTO_METADATA_FILE)) {
+        $decoded = json_decode((string)file_get_contents($PHOTO_METADATA_FILE), true);
+        if (is_array($decoded)) $metadata = $decoded;
+    }
+    $uploadedAt = [];
+    foreach ($metadata as $record) {
+        if (isset($record['filename'])) {
+            $uploadedAt[$record['filename']] = (string)($record['uploaded'] ?? '');
+        }
+    }
+    $photos = [];
+    foreach (glob(rtrim($UPLOAD_DIR, '/') . '/*') ?: [] as $file) {
+        if (!is_file($file)) continue;
+        $filename = basename($file);
+        if (!preg_match('/\.(jpe?g|png|webp)$/i', $filename)) continue;
+        $photos[] = [
+            'url' => '/uploads/' . rawurlencode($filename),
+            'uploaded' => $uploadedAt[$filename] ?? date('c', (int)filemtime($file)),
+        ];
+    }
+    usort($photos, function ($a, $b) {
+        return strcmp($a['uploaded'], $b['uploaded']);
+    });
+    return array_values(array_map(function ($photo) { return $photo['url']; }, $photos));
 }
 
 function fetchAlbumPhotos($albumUrl) {
@@ -127,6 +170,9 @@ if ($path === '/settings' && $method === 'POST') {
     if (isset($body['show_weather'])) $settings['show_weather'] = (bool)$body['show_weather'];
     if (isset($body['show_date'])) $settings['show_date'] = (bool)$body['show_date'];
     if (isset($body['ken_burns'])) $settings['ken_burns'] = (bool)$body['ken_burns'];
+    if (isset($body['photo_source']) && in_array($body['photo_source'], ['uploaded', 'google'], true)) {
+        $settings['photo_source'] = $body['photo_source'];
+    }
     if (isset($body['auto_schedule'])) {
         if (isset($body['auto_schedule']['photos_start'])) $settings['auto_schedule']['photos_start'] = $body['auto_schedule']['photos_start'];
         if (isset($body['auto_schedule']['photos_end'])) $settings['auto_schedule']['photos_end'] = $body['auto_schedule']['photos_end'];
@@ -145,6 +191,17 @@ if ($path === '/settings' && $method === 'POST') {
 // ============ LIST PHOTOS ============
 if ($path === '/list' && $method === 'GET') {
     $settings = loadSettings();
+    $source = $settings['photo_source'] ?? 'uploaded';
+    if ($source === 'uploaded') {
+        $photos = loadUploadedPhotos();
+        echo json_encode([
+            'photos' => $photos,
+            'count' => count($photos),
+            'source' => 'uploaded',
+            'cached' => false,
+        ]);
+        exit;
+    }
     $cache = loadCache();
     
     // Check if cache is fresh enough
@@ -154,6 +211,7 @@ if ($path === '/list' && $method === 'GET') {
             'count' => count($cache['photos']),
             'fetched_at' => $cache['fetched_at'],
             'album_url' => $settings['album_url'],
+            'source' => 'google',
             'cached' => true,
         ]);
         exit;
@@ -173,6 +231,7 @@ if ($path === '/list' && $method === 'GET') {
         'count' => count($photos),
         'fetched_at' => time(),
         'album_url' => $settings['album_url'],
+        'source' => 'google',
         'cached' => false,
     ]);
     exit;
@@ -181,11 +240,22 @@ if ($path === '/list' && $method === 'GET') {
 // ============ REFRESH ============
 if ($path === '/refresh') {
     $settings = loadSettings();
+    if (($settings['photo_source'] ?? 'uploaded') === 'uploaded') {
+        $photos = loadUploadedPhotos();
+        echo json_encode([
+            'photos' => $photos,
+            'count' => count($photos),
+            'source' => 'uploaded',
+            'refreshed' => true,
+        ]);
+        exit;
+    }
     $photos = fetchAlbumPhotos($settings['album_url']);
     saveCache(['photos' => $photos, 'fetched_at' => time()]);
     echo json_encode([
         'photos' => $photos,
         'count' => count($photos),
+        'source' => 'google',
         'refreshed' => true,
     ]);
     exit;
