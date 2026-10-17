@@ -883,8 +883,13 @@
         var allDone = kid.total > 0 && kid.done === kid.total;
         var choreHtml = "";
         if (kid.chores.length > 0) {
-          for (var c = 0; c < kid.chores.length; c++) {
-            var ch = kid.chores[c];
+          // Keep the server order within each group, but float unfinished
+          // chores above completed chores so the next action is always clear.
+          var sortedChores = kid.chores.slice().sort(function(a, b) {
+            return Number(a.done) - Number(b.done);
+          });
+          for (var c = 0; c < sortedChores.length; c++) {
+            var ch = sortedChores[c];
             var emojiSpan = ch.emoji ? '<span class="chore-emoji">' + ch.emoji + '</span>' : '';
             choreHtml += '<div class="chore-item">' +
               '<div class="chore-checkbox ' + (ch.done ? "done" : "") + '">' + (ch.done ? "\u2713" : "") + '</div>' +
