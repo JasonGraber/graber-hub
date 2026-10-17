@@ -10,22 +10,68 @@
  *   GET  /voice.php/status        — Health check
  */
 
+date_default_timezone_set(getenv('GRABER_HUB_TIMEZONE') ?: 'America/New_York');
+
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type');
+header('Access-Control-Allow-Headers: Content-Type, X-Graber-Hub-Token');
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(200); exit; }
 
-$DATA_FILE = '/home/pi/graber-hub/data.json';
+$DATA_FILE = getenv('GRABER_HUB_DATA_FILE') ?: '/home/pi/graber-hub/data.json';
+$VOICE_TOKEN = getenv('GRABER_HUB_VOICE_TOKEN') ?: '';
+
+if ($VOICE_TOKEN !== '') {
+    $suppliedToken = $_SERVER['HTTP_X_GRABER_HUB_TOKEN'] ?? '';
+    if (!hash_equals($VOICE_TOKEN, $suppliedToken)) {
+        http_response_code(401);
+        echo json_encode(['ok' => false, 'error' => 'unauthorized']);
+        exit;
+    }
+}
 
 function loadData() {
     global $DATA_FILE;
     return json_decode(file_get_contents($DATA_FILE), true);
 }
 
-function saveData($data) {
+function markChoreDone($date, $choreId) {
     global $DATA_FILE;
-    file_put_contents($DATA_FILE, json_encode($data, JSON_PRETTY_PRINT));
+    $handle = fopen($DATA_FILE, 'c+');
+    if (!$handle || !flock($handle, LOCK_EX)) {
+        throw new RuntimeException('Unable to lock dashboard data');
+    }
+
+    rewind($handle);
+    $data = json_decode((string)stream_get_contents($handle), true);
+    if (!is_array($data)) {
+        flock($handle, LOCK_UN);
+        fclose($handle);
+        throw new RuntimeException('Dashboard data is invalid JSON');
+    }
+
+    if (isset($data['chores'][$date])) {
+        foreach ($data['chores'][$date] as &$chore) {
+            if ((int)$chore['id'] === (int)$choreId) {
+                $chore['done'] = true;
+                break;
+            }
+        }
+        unset($chore);
+    }
+    $data['data_version'] = max(1, (int)($data['data_version'] ?? 1)) + 1;
+
+    $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    rewind($handle);
+    if ($json === false || !ftruncate($handle, 0) || fwrite($handle, $json) === false) {
+        flock($handle, LOCK_UN);
+        fclose($handle);
+        throw new RuntimeException('Unable to save dashboard data');
+    }
+    fflush($handle);
+    flock($handle, LOCK_UN);
+    fclose($handle);
+    return $data;
 }
 
 function today() { return date('Y-m-d'); }
@@ -66,24 +112,9 @@ function fuzzyMatch($needle, $haystack) {
 function findKid($name, $kids) {
     $name = strtolower(trim($name));
     
-    // Common nicknames/mishearings
-    $aliases = [
-        'aurora' => ['aurora', 'rora', 'aura', 'arora'],
-        'deandre' => ['deandre', 'dre', 'andre', 'deondre', 'dee', 'dee andre'],
-        'alexia' => ['alexia', 'lexi', 'lexia', 'alex', 'alexis'],
-        'truett' => ['truett', 'tru', 'true', 'truet', 'truitt', 'truet'],
-    ];
-    
     foreach ($kids as $kid) {
         $kidName = strtolower($kid['name']);
-        // Direct match
         if ($name === $kidName) return $kid;
-        // Alias match
-        if (isset($aliases[$kidName])) {
-            foreach ($aliases[$kidName] as $alias) {
-                if ($name === $alias || strpos($name, $alias) !== false) return $kid;
-            }
-        }
     }
     
     // Fuzzy fallback
@@ -97,6 +128,10 @@ function findKid($name, $kids) {
         }
     }
     return $bestKid;
+}
+
+function knownKidNames($kids) {
+    return implode(', ', array_map(function ($kid) { return $kid['name']; }, $kids));
 }
 
 function findChore($choreName, $chores, $kidId) {
@@ -135,8 +170,8 @@ if ($path === '/status') {
 
 // ============ CHORE DONE ============
 // POST /voice.php/chore-done
-// Body: { "kid": "Aurora", "chore": "make bed" }
-// OR: { "text": "Aurora finished make bed" }  (for IFTTT text ingredient)
+// Body: { "kid": "Sam", "chore": "make bed" }
+// OR: { "text": "Sam finished make bed" }  (for IFTTT text ingredient)
 if ($path === '/chore-done' && $method === 'POST') {
     $data = loadData();
     $d = today();
@@ -149,7 +184,7 @@ if ($path === '/chore-done' && $method === 'POST') {
         $kidName = $body['kid'];
         $choreName = $body['chore'];
     } elseif (isset($body['text'])) {
-        // Parse "Aurora finished make bed" or "Aurora did make bed" or "Aurora make bed"
+        // Parse "Sam finished make bed" or "Sam did make bed" or "Sam make bed"
         $text = trim($body['text']);
         // Try patterns: "Kid finished/did/completed chore" or "Kid chore"
         if (preg_match('/^(\w+)\s+(?:finished|did|completed|done with|checked off)\s+(.+)$/i', $text, $m)) {
@@ -159,7 +194,7 @@ if ($path === '/chore-done' && $method === 'POST') {
             $kidName = $m[1];
             $choreName = $m[2];
         } else {
-            echo json_encode(['ok' => false, 'speech' => "Sorry, I didn't understand that. Try saying something like: Aurora finished make bed."]);
+            echo json_encode(['ok' => false, 'speech' => "Sorry, I didn't understand that. Try saying something like: Sam finished make bed."]);
             exit;
         }
     } else {
@@ -170,7 +205,7 @@ if ($path === '/chore-done' && $method === 'POST') {
     // Find the kid
     $kid = findKid($kidName, $data['kids']);
     if (!$kid) {
-        echo json_encode(['ok' => false, 'speech' => "I don't know a kid named $kidName. I know Aurora, Deandre, Alexia, and Truett."]);
+        echo json_encode(['ok' => false, 'speech' => "I don't know a kid named $kidName. I know " . knownKidNames($data['kids']) . "."]);
         exit;
     }
     
@@ -190,14 +225,7 @@ if ($path === '/chore-done' && $method === 'POST') {
         exit;
     }
     
-    // Toggle it done
-    foreach ($data['chores'][$d] as &$c) {
-        if ($c['id'] === $chore['id']) {
-            $c['done'] = true;
-            break;
-        }
-    }
-    saveData($data);
+    $data = markChoreDone($d, $chore['id']);
     
     // Count remaining
     $remaining = array_values(array_filter($data['chores'][$d], function($c) use ($kid) {
@@ -238,7 +266,7 @@ if ($path === '/chore-done' && $method === 'POST') {
 
 // ============ CHORES LEFT ============
 // POST /voice.php/chores-left
-// Body: { "kid": "Aurora" } OR { "text": "Aurora" }
+// Body: { "kid": "Sam" } OR { "text": "Sam" }
 if ($path === '/chores-left' && $method === 'POST') {
     $data = loadData();
     $d = today();
@@ -342,7 +370,7 @@ function formatTime($t) {
 
 // ============ IFTTT WEBHOOK FORMAT ============
 // POST /voice.php/ifttt
-// Body: { "value1": "Aurora finished make bed" }
+// Body: { "value1": "Sam finished make bed" }
 // This is the format IFTTT sends from Google Assistant
 if ($path === '/ifttt' && $method === 'POST') {
     $text = $body['value1'] ?? $body['text'] ?? '';
@@ -368,7 +396,7 @@ if ($path === '/ifttt' && $method === 'POST') {
         $kidName = $m[1];
         $choreName = $m[2];
     } elseif (preg_match('/^how\s+many.*?(?:chores?|left|remaining).*?(\w+)$/i', $text, $m)) {
-        // "How many chores does Aurora have left"
+        // "How many chores does Sam have left"
         $kidName = $m[1];
         $kid = findKid($kidName, $data['kids']);
         if ($kid) {
@@ -410,13 +438,13 @@ if ($path === '/ifttt' && $method === 'POST') {
     }
     
     if (empty($kidName)) {
-        echo json_encode(['ok' => false, 'speech' => "Sorry, I didn't understand. Try: Aurora finished make bed."]);
+        echo json_encode(['ok' => false, 'speech' => "Sorry, I didn't understand. Try: Sam finished make bed."]);
         exit;
     }
     
     $kid = findKid($kidName, $data['kids']);
     if (!$kid) {
-        echo json_encode(['ok' => false, 'speech' => "I don't know $kidName. I know Aurora, Deandre, Alexia, and Truett."]);
+        echo json_encode(['ok' => false, 'speech' => "I don't know $kidName. I know " . knownKidNames($data['kids']) . "."]);
         exit;
     }
     
@@ -432,10 +460,7 @@ if ($path === '/ifttt' && $method === 'POST') {
         exit;
     }
     
-    foreach ($data['chores'][$d] as &$c) {
-        if ($c['id'] === $chore['id']) { $c['done'] = true; break; }
-    }
-    saveData($data);
+    $data = markChoreDone($d, $chore['id']);
     
     $remaining = array_values(array_filter($data['chores'][$d], function($c) use ($kid) { return $c['kid_id'] === $kid['id'] && !$c['done']; }));
     $doneCount = count(array_filter($data['chores'][$d], function($c) use ($kid) { return $c['kid_id'] === $kid['id'] && $c['done']; }));

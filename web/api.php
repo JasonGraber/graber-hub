@@ -1,5 +1,5 @@
 <?php
-date_default_timezone_set('America/New_York');
+date_default_timezone_set(getenv('GRABER_HUB_TIMEZONE') ?: 'America/New_York');
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
@@ -468,17 +468,16 @@ function loadDataWithRecurringChores($date) {
 function getDefaultData() {
     return [
         'kids' => [
-            ['id' => 1, 'name' => 'Aurora', 'initial' => 'A', 'color' => '#ec5281', 'sort' => 1],
-            ['id' => 2, 'name' => 'Deandre', 'initial' => 'D', 'color' => '#03a9f4', 'sort' => 2],
-            ['id' => 3, 'name' => 'Alexia', 'initial' => 'A', 'color' => '#a78bfa', 'sort' => 3],
-            ['id' => 4, 'name' => 'Truett', 'initial' => 'T', 'color' => '#4ade80', 'sort' => 4],
+            ['id' => 1, 'name' => 'Kid 1', 'initial' => '1', 'color' => '#ec5281', 'sort' => 1],
+            ['id' => 2, 'name' => 'Kid 2', 'initial' => '2', 'color' => '#03a9f4', 'sort' => 2],
+            ['id' => 3, 'name' => 'Kid 3', 'initial' => '3', 'color' => '#a78bfa', 'sort' => 3],
+            ['id' => 4, 'name' => 'Kid 4', 'initial' => '4', 'color' => '#4ade80', 'sort' => 4],
         ],
         'chores' => new stdClass(),
         'chore_templates' => [],
         'schedules' => new stdClass(),
         'countdowns' => [
-            ['id' => 1, 'label' => 'Bansko Trip', 'emoji' => "\xF0\x9F\x8F\x94\xEF\xB8\x8F", 'target_date' => '2026-03-16'],
-            ['id' => 2, 'label' => 'Anniversary', 'emoji' => "\xF0\x9F\x92\x95", 'target_date' => '2026-06-19'],
+            ['id' => 1, 'label' => 'Family Vacation', 'emoji' => "\xF0\x9F\x8F\x94\xEF\xB8\x8F", 'target_date' => date('Y-m-d', strtotime('+90 days'))],
         ],
         'verses' => [
             ['id' => 1, 'text' => 'Train up a child in the way he should go; even when he is old he will not depart from it.', 'ref' => 'Proverbs 22:6'],

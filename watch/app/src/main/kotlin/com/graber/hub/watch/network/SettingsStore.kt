@@ -11,7 +11,7 @@ private val Context.dataStore by preferencesDataStore(name = "graber_hub_watch_s
 
 object SettingsStore {
     private val SERVER_URL_KEY = stringPreferencesKey("server_url")
-    private const val DEFAULT_URL = "http://192.168.86.43"
+    private const val DEFAULT_URL = "http://192.168.1.100"
 
     fun serverUrlFlow(context: Context): Flow<String> =
         context.dataStore.data.map { prefs ->

@@ -1,144 +1,90 @@
-# Graber Hub — Google Assistant Setup Guide
+# Voice Automation Setup
 
-## Voice Webhook (Already Live)
+Graber Hub includes an optional webhook for marking chores complete and reading family status. Google Home and IFTTT capabilities change frequently, so treat the examples below as the server contract and connect them through the automation service you use.
 
-Your Graber Hub voice API is accessible at:
-```
-https://approximately-reservation-lewis-females.trycloudflare.com/voice.php
-```
+## Security first
 
-**Note:** This URL changes if the tunnel restarts. For a permanent URL, set up a named Cloudflare tunnel (see bottom of this doc).
+The webhook changes family data. Do not expose it anonymously.
 
-### Endpoints
+1. Set `GRABER_HUB_VOICE_TOKEN` to a long random value in the PHP/lighttpd environment.
+2. Require callers to send the same value in `X-Graber-Hub-Token`.
+3. Use HTTPS at the tunnel or reverse proxy.
+4. Keep the primary `/api.php` endpoint private on your LAN or Tailscale network.
 
-| Endpoint | Method | Body | What it does |
-|----------|--------|------|-------------|
-| `/voice.php/chore-done` | POST | `{"kid":"Aurora","chore":"make bed"}` | Marks a chore as done |
-| `/voice.php/chores-left` | POST | `{"kid":"Aurora"}` | Reports remaining chores |
-| `/voice.php/whats-next` | GET | — | What's happening now on the schedule |
-| `/voice.php/ifttt` | POST | `{"value1":"Aurora finished make bed"}` | IFTTT-compatible format |
-| `/voice.php/status` | GET | — | Health check |
+## Endpoints
 
-All responses include a `speech` field with a natural language response.
+Assume the public webhook base is `https://hub.example.com/voice.php`.
 
----
+| Endpoint | Method | JSON body | Purpose |
+|---|---|---|---|
+| `/chore-done` | POST | `{"kid":"Sam","chore":"make bed"}` | Complete a matching chore |
+| `/chores-left` | POST | `{"kid":"Sam"}` | Report remaining chores |
+| `/whats-next` | GET | — | Report the current schedule block |
+| `/ifttt` | POST | `{"value1":"Sam finished make bed"}` | Parse a single text phrase |
+| `/status` | GET | — | Health check |
 
-## Option A: IFTTT (Easiest — 10 minutes)
+Every request must include:
 
-### Step 1: Create IFTTT Account
-1. Go to https://ifttt.com and sign up (free tier works)
-2. Connect your Google account (same one used on Google Home)
-
-### Step 2: Create Applet — "Check Off Chore"
-1. Click "Create" → "If This" → search **"Google Assistant V2"**
-2. Choose **"Activate scene"** trigger
-3. Scene name: `Graber Hub chore done`
-4. Click "Then That" → search **"Webhooks"**  
-5. Choose **"Make a web request"**
-6. Configure:
-   - URL: `https://approximately-reservation-lewis-females.trycloudflare.com/voice.php/ifttt`
-   - Method: POST
-   - Content Type: application/json
-   - Body: `{"value1":"{{TextField}}"}`
-7. Save
-
-### Step 3: Create Google Home Routine
-1. Open **Google Home** app on your phone
-2. Tap **Automations** → **+** → **Household**
-3. **Starter:** "When I say to Google Assistant"
-4. Add phrases:
-   - "Aurora finished make bed"
-   - "Deandre finished take out trash"  
-   - "Tell Graber Hub $ finished $" (use $ for variables)
-5. **Action:** "Try adding your own" → "Activate IFTTT scene: Graber Hub chore done"
-
-### Step 4: Repeat for "Chores Left"
-Same process, different webhook URL:
-- URL: `https://approximately-reservation-lewis-females.trycloudflare.com/voice.php/chores-left`
-- Body: `{"text":"{{TextField}}"}`
-- Phrases: "How many chores does Aurora have left", "What are Deandre's chores"
-
----
-
-## Option B: Direct Google Home Script (More Control)
-
-Google Home now supports **Home Script** for custom automations with HTTP actions.
-
-1. Open Google Home app → Settings → Automations → Script editor
-2. Create a new script:
-
-```yaml
-automation:
-  - alias: "Chore Check Off"
-    trigger:
-      - platform: voice
-        phrases:
-          - "{name} finished {chore}"
-          - "{name} did {chore}"
-          - "{name} completed {chore}"
-    action:
-      - service: http.post
-        url: "https://approximately-reservation-lewis-females.trycloudflare.com/voice.php/chore-done"
-        headers:
-          Content-Type: "application/json"
-        body:
-          kid: "{{ name }}"
-          chore: "{{ chore }}"
-      - service: tts.speak
-        message: "{{ response.speech }}"
+```text
+X-Graber-Hub-Token: YOUR_TOKEN
 ```
 
----
+Responses are JSON and include a `speech` field when a spoken response is available.
 
-## Voice Commands (What the Kids Say)
+## Test with curl
 
-Once set up, these work on any Google Home/Nest device in the house:
+```bash
+curl -fsS https://hub.example.com/voice.php/chore-done \
+  -H 'Content-Type: application/json' \
+  -H 'X-Graber-Hub-Token: YOUR_TOKEN' \
+  --data '{"kid":"Sam","chore":"make bed"}'
+```
 
-**Check off a chore:**
-> "Hey Google, Aurora finished make bed"
-> "Hey Google, Deandre did take out trash"
-> "Hey Google, Truett completed feed the dog"
+Test the health endpoint with the same header before configuring an automation platform.
 
-**Check remaining chores:**
-> "Hey Google, how many chores does Alexia have left"
-> "Hey Google, what are Aurora's chores"
+## IFTTT-style request
 
-**Check schedule:**
-> "Hey Google, what's next on the schedule"
+Configure a Webhooks action with:
 
----
+- URL: `https://hub.example.com/voice.php/ifttt`
+- Method: `POST`
+- Content type: `application/json`
+- Header: `X-Graber-Hub-Token: YOUR_TOKEN`
+- Body: `{"value1":"{{TextField}}"}`
 
-## Making the Tunnel Permanent
+Example phrases:
 
-The current tunnel URL changes on restart. For a permanent setup:
+- `Sam finished make bed`
+- `Jordan did take out trash`
+- `How many chores does Sam have left`
 
-1. Create a free Cloudflare account at https://dash.cloudflare.com
-2. Add a domain (or use a free subdomain)
-3. On the Pi:
+## Cloudflare Tunnel
+
+If you choose Cloudflare Tunnel, create a named tunnel and publish only the voice route through an authenticated policy or worker. Do not publish the whole Hub just because the tunnel can reach it.
+
 ```bash
 cloudflared tunnel login
 cloudflared tunnel create graber-hub
-cloudflared tunnel route dns graber-hub hub.yourdomain.com
+cloudflared tunnel route dns graber-hub hub.example.com
 ```
-4. Create config at `/home/pi/.cloudflared/config.yml`:
+
+Example origin configuration:
+
 ```yaml
 tunnel: graber-hub
-credentials-file: /home/pi/.cloudflared/<tunnel-id>.json
+credentials-file: /home/pi/.cloudflared/TUNNEL_ID.json
 ingress:
-  - hostname: hub.yourdomain.com
-    service: http://localhost:80
+  - hostname: hub.example.com
+    path: /voice.php/*
+    service: http://127.0.0.1:80
   - service: http_status:404
 ```
-5. Install as service: `sudo cloudflared service install`
-6. Update all webhook URLs to use your permanent domain
 
----
+Install the tunnel as a service only after the route, token, and HTTPS behavior have been verified.
 
-## Smart Features Built In
+## Matching behavior
 
-- **Fuzzy matching:** "make the bed" matches "make bed", "clean up room" matches "clean room"
-- **Nickname support:** "Lexi" matches Alexia, "Dre" matches Deandre, "Tru" matches Truett
-- **Dynamic chores:** Always checks today's actual chores — when Michelle adds one, voice recognizes it immediately
-- **Encouraging responses:** Random positive messages ("Way to go!", "Nailed it!", "You rock!")
-- **All-done celebration:** Special message when a kid finishes all chores
-- **Chore listing:** If the voice can't match a chore, it reads back the remaining ones so the kid can try again
+- Kid names come from `data.json`; no family names are hard-coded.
+- Chores use case-insensitive fuzzy matching.
+- If no chore matches, the response lists unfinished chores for that kid.
+- When all chores are complete, the response includes a celebration.

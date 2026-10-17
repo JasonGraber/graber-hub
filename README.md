@@ -1,268 +1,152 @@
 # 🏠 Graber Hub
 
-A family command center built on a Raspberry Pi. Manage schedules, chores, countdowns, photo slideshows, and Bible verses — from a beautiful dark-themed wall display, your phone, or your watch.
+An open-source family command center for a Raspberry Pi and wall-mounted display. It puts the day's schedule, chores, countdowns, timer, Scripture, weather, and family photos in one place—and lets parents manage it from Android.
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Platform](https://img.shields.io/badge/platform-Raspberry%20Pi-red.svg)
-![Android](https://img.shields.io/badge/android-companion%20app-green.svg)
-![Wear OS](https://img.shields.io/badge/wear%20os-watch%20app-blue.svg)
+![Graber Hub dashboard](docs/images/dashboard.png)
 
----
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/server-Raspberry%20Pi-C51A4A.svg)
+![PHP](https://img.shields.io/badge/backend-PHP-777BB4.svg)
+[![Android app](https://img.shields.io/badge/companion-Android-3DDC84.svg)](https://github.com/JasonGraber/graber-hub-app)
 
-## ✨ What It Does
+## Why it exists
 
-| | Web Dashboard | Phone App | Watch App |
-|---|---|---|---|
-| 📅 **Schedule** | Full-day timeline with progress tracking | Add, edit, delete blocks + templates | View today's blocks |
-| ✅ **Chores** | Per-kid cards with completion animations | Assign, toggle, and schedule chores every 1, 2, or 4 weeks | Tap to complete |
-| ⏳ **Countdowns** | Animated hero countdown with floating dots | Manage upcoming events | Quick glance |
-| ⏱️ **Timer** | Full-screen countdown with alarm | Start/stop from anywhere | Timer controls |
-| 📖 **Verses** | Daily rotation in header | Add and manage verses | — |
-| 📷 **Photos** | Ken Burns slideshow with weather overlay | Set album + switch modes | — |
-| 🗣️ **Voice** | — | — | — |
+Family logistics usually live across chore apps, calendars, timers, sticky notes, and photo frames. Graber Hub combines those jobs into a calm, always-visible screen that the whole family can understand at a glance.
 
-**Voice control** works on any Google Home/Nest device via webhooks:
-> "Hey Google, Aurora finished make bed"
-> "Hey Google, what are Deandre's chores?"
+- **Kids see what is happening now and what they own next.**
+- **Parents update the day from a phone instead of touching the wall display.**
+- **Completed chores fall to the bottom; unfinished work stays visible.**
+- **Everything is self-hosted.** Your family data stays on your Pi.
+- **No subscription is required.** The project is MIT licensed.
 
----
+## Features
 
-## 📸 Display Modes
+| Feature | Wall display | Android app | Wear OS |
+|---|---:|---:|---:|
+| Daily schedule | ✅ | Manage | View |
+| Chores and recurring chores | ✅ | Manage | Complete |
+| Countdown events | ✅ | Manage | View |
+| Shared timer | ✅ | Control | Control |
+| Bible verse | ✅ | Manage | — |
+| Uploaded/Google photos | ✅ | Manage | — |
+| Weather | ✅ | — | — |
+| Dashboard / Photos / Auto modes | ✅ | Switch | — |
 
-The Hub supports three display modes, switchable from the phone app:
+## Components
 
-- **🖥️ Dashboard** — Chores, schedule, countdowns, timer, Bible verse
-- **📷 Photos** — Full-screen Google Photos slideshow with clock, weather, and verse overlay
-- **✨ Auto** — Photos at night (8 PM–7 AM), dashboard during the day
+- **This repository:** Raspberry Pi web dashboard, API, optional voice webhook, and Wear OS client.
+- **[graber-hub-app](https://github.com/JasonGraber/graber-hub-app):** supported Android phone companion.
 
-A live mode indicator appears on both the wall display and the phone app.
+The old `android/` directory is retained as historical reference. New phone work belongs in the companion-app repository.
 
----
+## Quick start
 
-## 🏗️ Architecture
+### Try it locally
 
-```
-┌─────────────────────────────────────────────┐
-│              Raspberry Pi (Hub)              │
-│                                             │
-│  ┌──────────┐  ┌──────────┐  ┌───────────┐ │
-│  │ index.php │  │ api.php  │  │ photos.php│ │
-│  │ Dashboard │  │ REST API │  │ Slideshow │ │
-│  └──────────┘  └──────────┘  └───────────┘ │
-│                      │                      │
-│            ┌─────────┴─────────┐            │
-│            │   data.json       │            │
-│            │   photo-settings  │            │
-│            └───────────────────┘            │
-│                      │                      │
-│  ┌──────────┐  ┌─────┴──────┐              │
-│  │ voice.php │  │ lighttpd   │              │
-│  │ Webhooks  │  │ Web Server │              │
-│  └──────────┘  └────────────┘              │
-└──────────┬──────────────────────────────────┘
-           │ HTTP (WiFi / Tailscale / Cloudflare)
-     ┌─────┴──────┐
-     │             │
-┌────┴────┐  ┌────┴────┐
-│ Android │  │ Wear OS │
-│  Phone  │  │  Watch  │
-└─────────┘  └─────────┘
-```
-
----
-
-## 📋 Prerequisites
-
-- **Raspberry Pi 4** (2GB+ RAM) with Raspbian / Raspberry Pi OS
-- **Display** — DAKboard, any monitor, or a TV in kiosk mode
-- **lighttpd** with PHP (FastCGI)
-- **Cloudflare Tunnel** (optional) — for remote access and voice webhooks
-- **Android phone** and/or **Wear OS watch** for companion apps
-
----
-
-## 🚀 Quick Start
-
-### 1. Clone
+Requires PHP 7.4+.
 
 ```bash
 git clone https://github.com/JasonGraber/graber-hub.git
 cd graber-hub
+./scripts/dev-demo.sh
 ```
 
-### 2. Deploy the web dashboard to your Pi
+Open <http://127.0.0.1:8080/>. The demo uses temporary fictional data and does not touch your real files.
+
+### Install on Raspberry Pi
 
 ```bash
-scp web/{api,index,photos,voice}.php pi@<PI_IP>:/tmp/
-
-# On the Pi:
-sudo cp /tmp/{api,index,photos,voice}.php /var/www/html/
-sudo chown www-data:www-data /var/www/html/{api,index,photos,voice}.php
-sudo mkdir -p /home/pi/graber-hub
-sudo chown www-data:www-data /home/pi/graber-hub
+git clone https://github.com/JasonGraber/graber-hub.git
+cd graber-hub
+GRABER_HUB_TIMEZONE=America/New_York ./scripts/install-pi.sh
 ```
 
-The API auto-creates `data.json` with defaults on first request. To customize kids, copy the example:
+Then open `http://PI_ADDRESS/`. Follow the complete [Raspberry Pi setup guide](docs/SETUP.md) for kiosk mode, Android, Tailscale, photos, backups, and troubleshooting.
+
+## Android companion
+
+![Graber Hub Android app](https://raw.githubusercontent.com/JasonGraber/graber-hub-app/main/docs/images/chores.png)
+
+The phone app manages schedules, chores, recurring templates, timers, countdowns, verses, photos, colors, and display mode.
 
 ```bash
-scp web/data.example.json pi@<PI_IP>:/home/pi/graber-hub/data.json
+git clone https://github.com/JasonGraber/graber-hub-app.git
+cd graber-hub-app
+./gradlew assembleDebug
 ```
 
-### 3. Point the display browser to your dashboard
+See the [Android repository](https://github.com/JasonGraber/graber-hub-app) for build configuration and install steps.
 
+## Architecture
+
+```text
+Wall browser ─┐
+Android ──────┼── HTTP on LAN/Tailscale ──> lighttpd + PHP ──> JSON files
+Wear OS ──────┘                                  │
+                                                └── Open-Meteo weather proxy
 ```
-http://localhost/index.php
-```
 
-### 4. Install the companion apps (optional)
+The server uses file locking and optimistic concurrency (`X-Data-Version`) to protect the flat-file store from overlapping phone and display requests. Read [Architecture](docs/ARCHITECTURE.md) for the data model, runtime paths, and compatibility contract.
 
-**Phone app:**
+## API overview
+
+Base URL: `http://PI_ADDRESS/api.php`
+
+| Endpoint | Methods | Purpose |
+|---|---|---|
+| `/heartbeat` | GET | Readiness plus dashboard, timer, mode, and photo settings |
+| `/dashboard` | GET | Today's complete dashboard payload |
+| `/schedule` | GET/POST/PUT/DELETE | Schedule blocks |
+| `/schedule/template` | POST | Apply a full-day schedule template |
+| `/chores` | GET/POST/PUT/DELETE | One-time chores |
+| `/chore-templates` | GET/POST/PUT/DELETE | Recurring chores |
+| `/kids/{id}` | PUT | Kid name/color configuration |
+| `/countdowns` | GET/POST/DELETE | Countdown events |
+| `/timer` | GET/POST/DELETE | Shared timer |
+| `/verses` | GET/POST/PUT/DELETE | Verse library and active verse |
+| `/photos` | GET/POST/PUT/DELETE | Uploaded photo library |
+| `/mode` | GET/POST | Dashboard, photos, or auto mode |
+| `/photo-settings` | GET/POST | Slideshow configuration |
+| `/weather` | GET | Open-Meteo proxy |
+
+Use `GET /api.php/heartbeat` as the install health check.
+
+## Configuration
+
+The installer configures these environment variables for lighttpd:
+
+| Variable | Default in source | Purpose |
+|---|---|---|
+| `GRABER_HUB_DATA_FILE` | `/home/pi/graber-hub/data.json` | Main state file |
+| `GRABER_HUB_PHOTO_SETTINGS_FILE` | `/home/pi/graber-hub/photo-settings.json` | Slideshow settings |
+| `GRABER_HUB_PHOTOS_FILE` | `/home/pi/graber-hub/photos.json` | Photo metadata |
+| `GRABER_HUB_UPLOAD_DIR` | `/var/www/html/uploads` | Uploaded images |
+| `GRABER_HUB_MAX_PHOTOS` | `50` | Upload limit |
+| `GRABER_HUB_TIMEZONE` | `America/New_York` | Server timezone |
+| `GRABER_HUB_VOICE_TOKEN` | unset | Optional voice-webhook token |
+
+Runtime files are intentionally excluded from Git.
+
+## Development
+
+Read [AGENTS.md](AGENTS.md) before agent-assisted work. It records the source-of-truth files, safety invariants, verification commands, and deployment contract.
+
 ```bash
-cd android && ./gradlew assembleDebug
-# APK → android/app/build/outputs/apk/debug/app-debug.apk
+php -l web/api.php
+php -l web/index.php
+php -l web/photos.php
+php -l web/voice.php
+for test in tests/*.sh; do "$test"; done
 ```
 
-**Watch app:**
-```bash
-cd watch && ./gradlew assembleDebug
-adb connect <WATCH_IP>:<PORT>
-adb install watch/app/build/outputs/apk/debug/app-debug.apk
-```
+## Security
 
----
+Run the Hub only on a trusted LAN or private VPN such as Tailscale. The main API does not provide user accounts and should never be port-forwarded directly to the Internet. Read [SECURITY.md](SECURITY.md).
 
-## 📡 API Reference
+## Contributing
 
-Base URL: `http://<PI_IP>/api.php`
+Pull requests are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), use fictional sample data, and include the regression results for behavior changes.
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/dashboard` | GET | Full dashboard data (kids, chores, schedule, countdowns, verse) |
-| `/schedule` | GET | Today's schedule blocks |
-| `/schedule` | POST | Add a schedule block |
-| `/schedule/{id}` | PUT | Edit a schedule block |
-| `/schedule/{id}` | DELETE | Delete a schedule block |
-| `/chores` | GET | Today's chores |
-| `/chores` | POST | Add a chore |
-| `/chores/{id}/toggle` | PUT | Toggle chore completion |
-| `/chores/{id}` | DELETE | Delete a chore |
-| `/chore-templates` | GET/POST | List or create recurring chore templates |
-| `/chore-templates/{id}` | PUT/DELETE | Update or delete a recurring chore template |
-| `/kids/{id}` | PUT | Update kid config (name, color) |
-| `/countdowns` | GET/POST | List or add countdowns |
-| `/countdowns/{id}` | DELETE | Delete a countdown |
-| `/timer/start` | POST | Start timer (`{ minutes, label }`) |
-| `/timer/stop` | POST | Stop the timer |
-| `/timer` | GET | Timer status |
-| `/mode` | GET/POST | Get or set display mode |
-| `/photo-settings` | GET/POST | Photo slideshow settings |
-| `/verses` | GET/POST | List or add Bible verses |
-| `/verses/{id}` | DELETE | Delete a verse |
+## License
 
----
-
-## 🗣️ Voice Control
-
-See [docs/GOOGLE-ASSISTANT-SETUP.md](docs/GOOGLE-ASSISTANT-SETUP.md) for the full Google Home / IFTTT setup guide.
-
-**Built-in smart features:**
-- Fuzzy matching — "make the bed" matches "make bed"
-- Nicknames — "Lexi" → Alexia, "Dre" → Deandre, "Tru" → Truett
-- Encouraging responses — random positive messages on completion
-- All-done celebration — special message when a kid finishes everything
-
----
-
-## 🎨 Customization
-
-### Kids
-Edit `data.json` to set names, initials, and accent colors:
-```json
-{
-  "kids": [
-    { "id": 1, "name": "Aurora", "initial": "A", "color": "#ec5281" },
-    { "id": 2, "name": "Deandre", "initial": "D", "color": "#03a9f4" }
-  ]
-}
-```
-
-### Theme
-The dashboard uses CSS custom properties — easy to retheme:
-```css
-:root {
-  --bg: #0a0a0f;
-  --surface: #14141f;
-  --accent: #03a9f4;
-  --pink: #ec5281;
-  --green: #4ade80;
-}
-```
-
-### Bible Verses
-Add via the API or companion app. Verses rotate daily.
-
-### Photo Slideshow
-1. Create a shared Google Photos album
-2. Paste the share URL in the companion app
-3. Switch display mode to "Photos" or "Auto"
-
----
-
-## 📁 Project Structure
-
-```
-graber-hub/
-├── web/                          # Raspberry Pi dashboard & API
-│   ├── index.php                 # Dashboard UI (HTML/CSS/JS)
-│   ├── api.php                   # REST API
-│   ├── photos.php                # Photo slideshow engine
-│   ├── voice.php                 # Voice webhook endpoints
-│   └── data.example.json         # Example data file
-├── android/                      # Phone companion app
-│   ├── app/src/main/java/...     # Kotlin + Jetpack Compose
-│   ├── build.gradle.kts
-│   └── gradlew
-├── watch/                        # Wear OS watch app
-│   ├── app/src/main/kotlin/...   # Kotlin + Wear Compose
-│   ├── build.gradle.kts
-│   └── gradlew
-├── docs/                         # Documentation
-│   └── GOOGLE-ASSISTANT-SETUP.md
-├── LICENSE
-└── README.md
-```
-
----
-
-## 🛠️ Tech Stack
-
-| Component | Stack |
-|-----------|-------|
-| **Web Dashboard** | PHP, vanilla JS (ES5 for Pi compatibility), CSS3 |
-| **API** | PHP with JSON file storage |
-| **Phone App** | Kotlin, Jetpack Compose, Material 3, Retrofit |
-| **Watch App** | Kotlin, Wear Compose, Horologist, Retrofit |
-| **Infrastructure** | lighttpd, Cloudflare Tunnel, Tailscale |
-
----
-
-## 🤝 Contributing
-
-This started as a family project. If you want to build something similar:
-
-1. Fork the repo
-2. Customize kids, colors, schedule templates, and verses
-3. Deploy to your Pi
-4. PRs welcome for features that help other families!
-
----
-
-## 📄 License
-
-MIT License — see [LICENSE](LICENSE) for details.
-
----
-
-Built with love for the Graber family by [Jason Graber](https://github.com/JasonGraber) and [Cody](https://github.com/openclaw/openclaw).
-
-> *"Train up a child in the way he should go; even when he is old he will not depart from it."* — Proverbs 22:6
+[MIT](LICENSE) © 2026 Jason Graber

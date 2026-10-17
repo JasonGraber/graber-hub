@@ -1,0 +1,27 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  php:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test tools
+        run: sudo apt-get update && sudo apt-get install -y php-cli jq curl
+      - name: Lint PHP
+        run: |
+          for file in web/*.php scripts/create-demo-data.php; do
+            php -l "$file"
+          done
+      - name: Run API smoke tests
+        run: |
+          for test in tests/*.sh; do
+            "$test"
+          done
