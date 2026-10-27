@@ -140,7 +140,7 @@
     /* ============ MAIN GRID ============ */
     /*
       Layout:
-      [schedule] [countdown] [timer]     <- top half
+      [schedule] [paid jobs] [countdown] <- top half
       [schedule] [kid1][kid2][kid3][kid4] <- bottom half
     */
     .main-grid {
@@ -169,6 +169,8 @@
       gap: 14px;
       min-height: 0;
     }
+
+    .top-right > .hero-panel { flex: 0.9; }
 
     .kids-row {
       display: flex;
@@ -348,7 +350,101 @@
 
     .all-done-badge { text-align: center; padding: 6px; font-size: 22px; }
 
-    /* ============ COUNTDOWN + TIMER PANELS ============ */
+    /* ============ PAID JOBS ============ */
+    .paid-jobs-panel {
+      flex: 1.7;
+      background: var(--surface);
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .paid-jobs-panel .card-header { justify-content: space-between; }
+    .paid-jobs-panel .card-header h2 { color: var(--green); }
+    .paid-jobs-count {
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: rgba(74, 222, 128, 0.12);
+      color: var(--green);
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .paid-jobs-list {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      overflow-y: auto;
+      min-height: 0;
+    }
+
+    .paid-job {
+      display: grid;
+      grid-template-columns: 66px minmax(0, 1fr);
+      gap: 10px;
+      padding: 9px;
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      background: var(--surface-2);
+      min-height: 74px;
+    }
+
+    .paid-job.completed { opacity: 0.58; }
+    .paid-job-amount {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 9px;
+      background: rgba(74, 222, 128, 0.12);
+      color: var(--green);
+      font-size: 31px;
+      line-height: 1;
+      font-weight: 900;
+      letter-spacing: -2px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .paid-job-copy { min-width: 0; }
+    .paid-job-title {
+      font-size: 15px;
+      font-weight: 800;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .paid-job-description {
+      margin-top: 2px;
+      color: var(--text-muted);
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .paid-job-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 6px;
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .paid-job-due { color: var(--text-muted); }
+    .paid-job-status { color: var(--green); text-align: right; }
+    .paid-job.claimed .paid-job-status { color: var(--yellow); }
+    .paid-job.completed .paid-job-status { color: var(--accent); }
+    .paid-jobs-empty {
+      color: var(--text-muted);
+      font-size: 12px;
+      font-style: italic;
+      text-align: center;
+      margin: auto;
+    }
+
+    /* ============ COUNTDOWN PANEL ============ */
     .hero-panel {
       flex: 1;
       background: var(--surface);
@@ -405,35 +501,6 @@
     .dot {
       position: absolute; width: 4px; height: 4px; border-radius: 50%;
       background: var(--accent); opacity: 0.3; animation: drift 8s linear infinite;
-    }
-
-    /* Timer specific */
-    .timer-display {
-      font-size: 80px; font-weight: 900; letter-spacing: -2px;
-      font-variant-numeric: tabular-nums;
-      color: var(--text);
-      line-height: 1;
-    }
-
-    .timer-display.running {
-      background: linear-gradient(135deg, var(--green), var(--accent));
-      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    }
-
-    .timer-display.done-flash {
-      animation: timerFlash 0.5s ease-in-out infinite;
-    }
-
-    .timer-idle-msg {
-      font-size: 14px;
-      color: var(--text-muted);
-      font-style: italic;
-      margin-top: 8px;
-    }
-
-    @keyframes timerFlash {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.3; }
     }
 
     @keyframes float {
@@ -638,6 +705,18 @@
       0% { transform: translateY(0) rotate(0deg); opacity: 1; }
       100% { transform: translateY(110vh) rotate(720deg); opacity: 0; }
     }
+
+    @media (max-width: 1200px) {
+      .header { padding-left: 18px; padding-right: 18px; }
+      .main-grid { padding-left: 18px; padding-right: 18px; gap: 12px; }
+      .top-right, .kids-row { gap: 12px; }
+      .hero-emoji { font-size: 38px; }
+      .hero-label { font-size: 12px; letter-spacing: 2px; }
+      .hero-number, .timer-display { font-size: 54px; letter-spacing: -2px; }
+      .hero-unit { font-size: 15px; letter-spacing: 3px; }
+      .hero-sub, .timer-idle-msg { font-size: 10px; }
+      .paid-job { grid-template-columns: 66px minmax(0, 1fr); }
+    }
   </style>
 </head>
 <body>
@@ -726,8 +805,16 @@
       <div class="card-body" id="schedule-list"></div>
     </div>
 
-    <!-- Top right: Countdown + Timer side by side -->
+    <!-- Top right: Paid Jobs + Countdown -->
     <div class="top-right">
+      <section class="paid-jobs-panel" aria-label="Paid jobs">
+        <div class="card-header">
+          <h2>Paid Jobs</h2>
+          <span class="paid-jobs-count" id="paid-jobs-count">0 OPEN</span>
+        </div>
+        <div class="paid-jobs-list" id="paid-jobs-list"></div>
+      </section>
+
       <div class="hero-panel" id="countdown-hero">
         <div class="hero-dots" id="countdown-dots"></div>
         <div class="countdown-ring"></div>
@@ -740,17 +827,6 @@
         <div class="hero-sub" id="cd-date"></div>
       </div>
 
-      <div class="hero-panel" id="timer-panel">
-        <div class="hero-dots" id="timer-dots"></div>
-        <div class="countdown-ring" style="border-color: var(--green);"></div>
-        <div class="countdown-ring" style="border-color: var(--green);"></div>
-        <div class="countdown-ring" style="border-color: var(--green);"></div>
-        <div class="hero-emoji" id="timer-emoji">\u23F1</div>
-        <div class="hero-label">Timer</div>
-        <div class="timer-display" id="timer-display">00:00</div>
-        <div class="hero-unit" id="timer-unit">READY</div>
-        <div class="timer-idle-msg" id="timer-idle">Set from the app</div>
-      </div>
     </div>
 
     <!-- Bottom right: Kids -->
@@ -783,13 +859,6 @@
     var currentCountdownIndex = 0;
     var allCountdowns = [];
     var previousChoreStates = {};
-    var timerEndTime = null;
-    var timerLabel = "";
-    var timerInterval = null;
-    var timerAlarmPlaying = false;
-    var timerAlarmCtx = null;
-    var timerAlarmOsc = null;
-    var timerAlarmTimeout = null;
 
     // ============ CLOCK ============
     function updateClock() {
@@ -924,6 +993,56 @@
         }
       }
       container.innerHTML = html;
+    }
+
+    // ============ PAID JOBS ============
+    function escapeHtml(value) {
+      return String(value == null ? "" : value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function formatJobDue(dateValue) {
+      if (!dateValue) return "No due date";
+      var due = new Date(dateValue + "T00:00:00");
+      if (isNaN(due.getTime())) return dateValue;
+      return "Due " + due.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    }
+
+    function renderPaidJobs(jobs) {
+      var list = document.getElementById("paid-jobs-list");
+      var count = document.getElementById("paid-jobs-count");
+      jobs = jobs || [];
+      var openCount = jobs.filter(function(job) { return job.status !== "completed"; }).length;
+      count.textContent = openCount + (openCount === 1 ? " OPEN" : " OPEN");
+
+      if (jobs.length === 0) {
+        list.innerHTML = '<div class="paid-jobs-empty">No paid jobs posted</div>';
+        return;
+      }
+
+      var html = "";
+      for (var i = 0; i < jobs.length; i++) {
+        var job = jobs[i];
+        var status = "Available to claim";
+        if (job.status === "claimed") status = "Claimed by " + (job.claimed_by_name || "a child");
+        if (job.status === "completed") status = "Completed";
+        html += '<article class="paid-job ' + escapeHtml(job.status) + '">' +
+          '<div class="paid-job-amount">$' + escapeHtml(job.amount) + '</div>' +
+          '<div class="paid-job-copy">' +
+            '<div class="paid-job-title">' + escapeHtml(job.title) + '</div>' +
+            '<div class="paid-job-description">' + escapeHtml(job.description || "Extra help needed") + '</div>' +
+            '<div class="paid-job-meta">' +
+              '<span class="paid-job-due">' + escapeHtml(formatJobDue(job.due_date)) + '</span>' +
+              '<span class="paid-job-status">' + escapeHtml(status) + '</span>' +
+            '</div>' +
+          '</div>' +
+        '</article>';
+      }
+      list.innerHTML = html;
     }
 
     // ============ SCHEDULE + PROGRESS ============
@@ -1086,125 +1205,6 @@
       }
     }, 30000);
 
-    // ============ TIMER ============
-        function renderTimer(data) {
-      if (data.active && data.end_time) {
-        timerEndTime = new Date(data.end_time).getTime();
-        timerLabel = data.label || "Timer";
-        if (!timerInterval) {
-          timerInterval = setInterval(updateTimerDisplay, 100);
-        }
-      } else {
-        timerEndTime = null;
-        timerLabel = "";
-        if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
-        stopAlarm();
-        document.getElementById("timer-display").textContent = "00:00";
-        document.getElementById("timer-display").className = "timer-display";
-        document.getElementById("timer-unit").textContent = "READY";
-        document.getElementById("timer-idle").textContent = "Set from the app";
-        document.getElementById("timer-idle").style.display = "";
-        document.getElementById("timer-emoji").textContent = "\u23F1";
-      }
-    }
-
-    function fetchTimer() {
-      var xhr = new XMLHttpRequest();
-      xhr.open("GET", API + "/timer");
-      xhr.onload = function() {
-        try { renderTimer(JSON.parse(xhr.responseText)); } catch(e) {}
-      };
-      xhr.send();
-    }
-
-    function updateTimerDisplay() {
-      if (!timerEndTime) return;
-      var now = Date.now();
-      var remaining = timerEndTime - now;
-      var display = document.getElementById("timer-display");
-      var unit = document.getElementById("timer-unit");
-      var idle = document.getElementById("timer-idle");
-      var emoji = document.getElementById("timer-emoji");
-
-      if (remaining <= 0) {
-        display.textContent = "00:00";
-        display.className = "timer-display done-flash";
-        unit.textContent = "TIME IS UP!";
-        idle.style.display = "none";
-        emoji.textContent = "\uD83D\uDD14";
-        if (!timerAlarmPlaying) {
-          timerAlarmPlaying = true;
-          playAlarm();
-        }
-        return;
-      }
-
-      display.className = "timer-display running";
-      idle.style.display = "none";
-      emoji.textContent = "\u23F1";
-
-      var totalSec = Math.ceil(remaining / 1000);
-      var hrs = Math.floor(totalSec / 3600);
-      var mins = Math.floor((totalSec % 3600) / 60);
-      var secs = totalSec % 60;
-
-      if (hrs > 0) {
-        display.textContent = pad(hrs) + ":" + pad(mins) + ":" + pad(secs);
-        unit.textContent = timerLabel || "COUNTING DOWN";
-      } else {
-        display.textContent = pad(mins) + ":" + pad(secs);
-        unit.textContent = timerLabel || "COUNTING DOWN";
-      }
-    }
-
-    function pad(n) { return n < 10 ? "0" + n : "" + n; }
-
-    // ============ ALARM SOUND ============
-    function playAlarm() {
-      try {
-        timerAlarmCtx = new (window.AudioContext || window.webkitAudioContext)();
-        var startTime = timerAlarmCtx.currentTime;
-        // Play a repeating chime pattern for 15 seconds
-        for (var i = 0; i < 15; i++) {
-          // Two-tone chime: high then low
-          var osc1 = timerAlarmCtx.createOscillator();
-          var gain1 = timerAlarmCtx.createGain();
-          osc1.type = "sine";
-          osc1.frequency.value = 880; // A5
-          gain1.gain.setValueAtTime(0.3, startTime + i);
-          gain1.gain.exponentialRampToValueAtTime(0.01, startTime + i + 0.4);
-          osc1.connect(gain1);
-          gain1.connect(timerAlarmCtx.destination);
-          osc1.start(startTime + i);
-          osc1.stop(startTime + i + 0.4);
-
-          var osc2 = timerAlarmCtx.createOscillator();
-          var gain2 = timerAlarmCtx.createGain();
-          osc2.type = "sine";
-          osc2.frequency.value = 659; // E5
-          gain2.gain.setValueAtTime(0.3, startTime + i + 0.5);
-          gain2.gain.exponentialRampToValueAtTime(0.01, startTime + i + 0.9);
-          osc2.connect(gain2);
-          gain2.connect(timerAlarmCtx.destination);
-          osc2.start(startTime + i + 0.5);
-          osc2.stop(startTime + i + 0.9);
-        }
-        timerAlarmTimeout = setTimeout(function() {
-          timerAlarmPlaying = false;
-          if (timerAlarmCtx) timerAlarmCtx.close();
-          timerAlarmCtx = null;
-        }, 15000);
-      } catch(e) {
-        console.error("Alarm error:", e);
-      }
-    }
-
-    function stopAlarm() {
-      timerAlarmPlaying = false;
-      if (timerAlarmTimeout) { clearTimeout(timerAlarmTimeout); timerAlarmTimeout = null; }
-      if (timerAlarmCtx) { timerAlarmCtx.close(); timerAlarmCtx = null; }
-    }
-
     // ============ VERSE ============
     function renderVerse(verse) {
       if (!verse) return;
@@ -1229,9 +1229,10 @@
     }
 
     // ============ MAIN FETCH ============
-        function renderDashboard(data) {
+    function renderDashboard(data) {
       renderKids(data.kids);
       renderSchedule(data.schedule);
+      renderPaidJobs(data.paid_jobs);
       renderCountdownHero(data.countdowns);
       renderCountdownBar(data.countdowns);
       renderVerse(data.verse);
@@ -1482,11 +1483,6 @@
             renderDashboard(data.dashboard);
           }
 
-          // Timer
-          if (data.timer) {
-            renderTimer(data.timer);
-          }
-
           // Display mode
           var rawMode = data.rawMode || "dashboard";
           updateModeIndicator(rawMode);
@@ -1538,7 +1534,6 @@
     updateClock();
     fetchWeather();
     initDots("countdown-dots");
-    initDots("timer-dots");
 
     // First heartbeat immediately
     heartbeat();

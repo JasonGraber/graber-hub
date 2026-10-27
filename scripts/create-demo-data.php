@@ -1,7 +1,11 @@
 <?php
 
+date_default_timezone_set(getenv('GRABER_HUB_TIMEZONE') ?: 'America/New_York');
+
 $today = date('Y-m-d');
 $vacation = date('Y-m-d', strtotime('+54 days'));
+$jobDueSoon = date('Y-m-d', strtotime('+2 days'));
+$jobDueLater = date('Y-m-d', strtotime('+5 days'));
 
 $data = [
     'kids' => [
@@ -21,6 +25,34 @@ $data = [
         ],
     ],
     'chore_templates' => [],
+    'paid_jobs' => [
+        [
+            'id' => 114,
+            'title' => 'Wash the family car',
+            'description' => 'Wash the outside, clean the wheels, and dry it.',
+            'amount' => 8,
+            'due_date' => $jobDueSoon,
+            'status' => 'available',
+            'claimed_by_kid_id' => null,
+            'claimed_at' => null,
+            'completed_at' => null,
+            'claim_reopened' => false,
+            'last_claimed_by_kid_id' => null,
+        ],
+        [
+            'id' => 115,
+            'title' => 'Organize the game shelf',
+            'description' => 'Sort the games and put every loose piece away.',
+            'amount' => 5,
+            'due_date' => $jobDueLater,
+            'status' => 'claimed',
+            'claimed_by_kid_id' => 4,
+            'claimed_at' => date('c'),
+            'completed_at' => null,
+            'claim_reopened' => false,
+            'last_claimed_by_kid_id' => null,
+        ],
+    ],
     'schedules' => [
         $today => [
             ['id' => 107, 'time_start' => '07:30', 'time_end' => '08:00', 'title' => 'Breakfast', 'emoji' => '🥞', 'sort' => 0],
@@ -38,7 +70,7 @@ $data = [
     'active_verse_id' => 112,
     'timer' => ['active' => false, 'end_time' => null, 'label' => ''],
     'data_version' => 1,
-    'nextId' => 113,
+    'nextId' => 115,
 ];
 
 echo json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . PHP_EOL;

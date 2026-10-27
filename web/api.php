@@ -265,6 +265,84 @@ function normalizeDate($value, $fallback = null) {
         : ($fallback ?? today());
 }
 
+function isValidDate($value) {
+    $candidate = is_string($value) ? trim($value) : '';
+    $date = DateTimeImmutable::createFromFormat('!Y-m-d', $candidate);
+    return $date && $date->format('Y-m-d') === $candidate;
+}
+
+function normalizePaidJob($input, $existing = []) {
+    $merged = array_merge($existing, is_array($input) ? $input : []);
+    $status = in_array(($merged['status'] ?? 'available'), ['available', 'claimed', 'completed'], true)
+        ? $merged['status']
+        : 'available';
+
+    return [
+        'id' => (int)($merged['id'] ?? 0),
+        'title' => trim((string)($merged['title'] ?? '')),
+        'description' => trim((string)($merged['description'] ?? '')),
+        'amount' => (int)($merged['amount'] ?? 0),
+        'due_date' => trim((string)($merged['due_date'] ?? '')),
+        'status' => $status,
+        'claimed_by_kid_id' => isset($merged['claimed_by_kid_id']) ? (int)$merged['claimed_by_kid_id'] : null,
+        'claimed_at' => $merged['claimed_at'] ?? null,
+        'completed_at' => $merged['completed_at'] ?? null,
+        'claim_reopened' => filter_var($merged['claim_reopened'] ?? false, FILTER_VALIDATE_BOOLEAN),
+        'last_claimed_by_kid_id' => isset($merged['last_claimed_by_kid_id']) ? (int)$merged['last_claimed_by_kid_id'] : null,
+    ];
+}
+
+function validatePaidJob($job) {
+    if ($job['title'] === '') return 'title is required';
+    if (strlen($job['title']) > 80) return 'title must be 80 characters or fewer';
+    if ($job['description'] === '') return 'description is required';
+    if (strlen($job['description']) > 180) return 'description must be 180 characters or fewer';
+    if ($job['amount'] < 1 || $job['amount'] > 10) return 'amount must be a whole dollar between 1 and 10';
+    if (!isValidDate($job['due_date'])) return 'due_date must use YYYY-MM-DD';
+    return null;
+}
+
+function releaseExpiredPaidJobClaims(&$data, $date) {
+    if (!isset($data['paid_jobs']) || !is_array($data['paid_jobs'])) {
+        $data['paid_jobs'] = [];
+        return false;
+    }
+
+    $changed = false;
+    foreach ($data['paid_jobs'] as $index => $rawJob) {
+        $job = normalizePaidJob($rawJob, $rawJob);
+        if (
+            $job['status'] === 'claimed' &&
+            !$job['claim_reopened'] &&
+            isValidDate($job['due_date']) &&
+            $job['due_date'] < $date
+        ) {
+            $job['last_claimed_by_kid_id'] = $job['claimed_by_kid_id'];
+            $job['claimed_by_kid_id'] = null;
+            $job['claimed_at'] = null;
+            $job['status'] = 'available';
+            $job['claim_reopened'] = true;
+            $data['paid_jobs'][$index] = $job;
+            $changed = true;
+        }
+    }
+    return $changed;
+}
+
+function paidJobsForResponse($data) {
+    $kidNames = [];
+    foreach (($data['kids'] ?? []) as $kid) {
+        $kidNames[(int)($kid['id'] ?? 0)] = (string)($kid['name'] ?? '');
+    }
+
+    return array_map(function ($rawJob) use ($kidNames) {
+        $job = normalizePaidJob($rawJob, $rawJob);
+        $kidId = $job['claimed_by_kid_id'];
+        $job['claimed_by_name'] = $kidId !== null ? ($kidNames[$kidId] ?? 'Unknown') : null;
+        return $job;
+    }, $data['paid_jobs'] ?? []);
+}
+
 function normalizeIntList($values, $min, $max) {
     if (!is_array($values)) return [];
     $normalized = [];
@@ -455,6 +533,10 @@ function loadDataWithRecurringChores($date) {
         $changed = true;
     }
 
+    if (releaseExpiredPaidJobClaims($data, $date)) {
+        $changed = true;
+    }
+
     if ($changed) {
         $data['data_version'] = currentDataVersion($data) + 1;
         writeDataToHandle($handle, $data);
@@ -475,6 +557,7 @@ function getDefaultData() {
         ],
         'chores' => new stdClass(),
         'chore_templates' => [],
+        'paid_jobs' => [],
         'schedules' => new stdClass(),
         'countdowns' => [
             ['id' => 1, 'label' => 'Family Vacation', 'emoji' => "\xF0\x9F\x8F\x94\xEF\xB8\x8F", 'target_date' => date('Y-m-d', strtotime('+90 days'))],
@@ -529,7 +612,7 @@ if ($path === '/dashboard' && $method === 'GET') {
         return array_merge($kid, ['chores' => $kidChores, 'done' => $done, 'total' => count($kidChores)]);
     }, $kidsData);
 
-    echo json_encode(['kids' => $kids, 'schedule' => $schedule, 'countdowns' => $data['countdowns'] ?? [], 'verse' => $verse, 'date' => $d, 'data_version' => $dataVersion]);
+    echo json_encode(['kids' => $kids, 'schedule' => $schedule, 'countdowns' => $data['countdowns'] ?? [], 'paid_jobs' => paidJobsForResponse($data), 'verse' => $verse, 'date' => $d, 'data_version' => $dataVersion]);
     exit;
 }
 
@@ -673,6 +756,126 @@ if (preg_match('#^/chore-templates/(\d+)$#', $path, $m) && $method === 'DELETE')
         }
         $data['chore_templates'] = $remaining;
         return ['ok' => true];
+    });
+}
+
+// ============ PAID JOBS ============
+if ($path === '/paid-jobs' && $method === 'GET') {
+    $data = loadDataWithRecurringChores(today());
+    sendDataVersion(currentDataVersion($data));
+    echo json_encode(paidJobsForResponse($data));
+    exit;
+}
+
+if ($path === '/paid-jobs' && $method === 'POST') {
+    mutateData(function (&$data) use ($body) {
+        $job = normalizePaidJob($body);
+        $error = validatePaidJob($job);
+        if ($error !== null) return ['__status' => 422, 'error' => $error];
+        $job['id'] = nextId($data);
+        $job['status'] = 'available';
+        $job['claimed_by_kid_id'] = null;
+        $job['claimed_at'] = null;
+        $job['completed_at'] = null;
+        $job['claim_reopened'] = false;
+        $job['last_claimed_by_kid_id'] = null;
+        if (!isset($data['paid_jobs']) || !is_array($data['paid_jobs'])) $data['paid_jobs'] = [];
+        $data['paid_jobs'][] = $job;
+        return ['success' => true, 'id' => $job['id']];
+    });
+}
+
+if (preg_match('#^/paid-jobs/(\d+)$#', $path, $m) && $method === 'PUT') {
+    $id = (int)$m[1];
+    mutateData(function (&$data) use ($id, $body) {
+        foreach (($data['paid_jobs'] ?? []) as $index => $existing) {
+            if ((int)($existing['id'] ?? 0) !== $id) continue;
+            $job = normalizePaidJob($body, $existing);
+            $job['id'] = $id;
+            $error = validatePaidJob($job);
+            if ($error !== null) return ['__status' => 422, 'error' => $error];
+            if (($existing['due_date'] ?? '') !== $job['due_date']) {
+                $job['claim_reopened'] = false;
+                $job['last_claimed_by_kid_id'] = null;
+            }
+            $data['paid_jobs'][$index] = $job;
+            return ['success' => true, 'id' => $id];
+        }
+        return ['__status' => 404, 'error' => 'not found'];
+    });
+}
+
+if (preg_match('#^/paid-jobs/(\d+)/claim$#', $path, $m) && $method === 'PUT') {
+    $id = (int)$m[1];
+    $kidId = (int)($body['kid_id'] ?? 0);
+    mutateData(function (&$data) use ($id, $kidId) {
+        $kidExists = false;
+        foreach (($data['kids'] ?? []) as $kid) {
+            if ((int)($kid['id'] ?? 0) === $kidId) {
+                $kidExists = true;
+                break;
+            }
+        }
+        if (!$kidExists) return ['__status' => 422, 'error' => 'valid kid_id is required'];
+
+        foreach (($data['paid_jobs'] ?? []) as $index => $existing) {
+            if ((int)($existing['id'] ?? 0) !== $id) continue;
+            $job = normalizePaidJob($existing, $existing);
+            if ($job['status'] !== 'available') return ['__status' => 409, 'error' => 'job is not available'];
+            if ($job['claim_reopened'] && $job['last_claimed_by_kid_id'] === $kidId) {
+                return ['__status' => 409, 'error' => 'an expired job must be claimed by another child'];
+            }
+
+            $unfinished = array_filter($data['chores'][today()] ?? [], function ($chore) use ($kidId) {
+                return (int)($chore['kid_id'] ?? 0) === $kidId && empty($chore['done']);
+            });
+            if (count($unfinished) > 0) {
+                return ['__status' => 409, 'error' => 'finish today\'s chores before claiming a paid job'];
+            }
+
+            $job['status'] = 'claimed';
+            $job['claimed_by_kid_id'] = $kidId;
+            $job['claimed_at'] = date('c');
+            $data['paid_jobs'][$index] = $job;
+            return ['success' => true, 'id' => $id];
+        }
+        return ['__status' => 404, 'error' => 'not found'];
+    });
+}
+
+if (preg_match('#^/paid-jobs/(\d+)/complete$#', $path, $m) && $method === 'PUT') {
+    $id = (int)$m[1];
+    $completed = filter_var($body['completed'] ?? true, FILTER_VALIDATE_BOOLEAN);
+    mutateData(function (&$data) use ($id, $completed) {
+        foreach (($data['paid_jobs'] ?? []) as $index => $existing) {
+            if ((int)($existing['id'] ?? 0) !== $id) continue;
+            $job = normalizePaidJob($existing, $existing);
+            if ($completed && $job['status'] !== 'claimed') {
+                return ['__status' => 409, 'error' => 'job must be claimed before it can be completed'];
+            }
+            $job['status'] = $completed ? 'completed' : 'available';
+            $job['completed_at'] = $completed ? date('c') : null;
+            if (!$completed) {
+                $job['claimed_by_kid_id'] = null;
+                $job['claimed_at'] = null;
+            }
+            $data['paid_jobs'][$index] = $job;
+            return ['success' => true, 'id' => $id];
+        }
+        return ['__status' => 404, 'error' => 'not found'];
+    });
+}
+
+if (preg_match('#^/paid-jobs/(\d+)$#', $path, $m) && $method === 'DELETE') {
+    $id = (int)$m[1];
+    mutateData(function (&$data) use ($id) {
+        $jobs = $data['paid_jobs'] ?? [];
+        $remaining = array_values(array_filter($jobs, function ($job) use ($id) {
+            return (int)($job['id'] ?? 0) !== $id;
+        }));
+        if (count($remaining) === count($jobs)) return ['__status' => 404, 'error' => 'not found'];
+        $data['paid_jobs'] = $remaining;
+        return ['success' => true];
     });
 }
 
@@ -1183,7 +1386,7 @@ if ($path === '/heartbeat' && $method === 'GET') {
     }
 
     echo json_encode([
-        'dashboard' => ['kids' => $kids, 'schedule' => $schedule, 'countdowns' => $data['countdowns'] ?? [], 'verse' => $verse, 'date' => $d, 'data_version' => $dataVersion],
+        'dashboard' => ['kids' => $kids, 'schedule' => $schedule, 'countdowns' => $data['countdowns'] ?? [], 'paid_jobs' => paidJobsForResponse($data), 'verse' => $verse, 'date' => $d, 'data_version' => $dataVersion],
         'timer' => $timer,
         'mode' => $resolvedMode,
         'rawMode' => $mode,

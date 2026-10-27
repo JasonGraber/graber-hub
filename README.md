@@ -1,6 +1,6 @@
 # 🏠 Graber Hub
 
-An open-source family command center for a Raspberry Pi and wall-mounted display. It puts the day's schedule, chores, countdowns, timer, Scripture, weather, and family photos in one place—and lets parents manage it from Android.
+An open-source family command center for a Raspberry Pi and wall-mounted display. It puts the day's schedule, chores, paid jobs, countdowns, Scripture, weather, and family photos in one place—and lets parents manage it from Android.
 
 ![Graber Hub dashboard](docs/images/dashboard.png)
 
@@ -25,8 +25,8 @@ Family logistics usually live across chore apps, calendars, timers, sticky notes
 |---|---:|---:|---:|
 | Daily schedule | ✅ | Manage | View |
 | Chores and recurring chores | ✅ | Manage | Complete |
+| Paid jobs | ✅ | Post, claim, complete | — |
 | Countdown events | ✅ | Manage | View |
-| Shared timer | ✅ | Control | Control |
 | Bible verse | ✅ | Manage | — |
 | Uploaded/Google photos | ✅ | Manage | — |
 | Weather | ✅ | — | — |
@@ -67,7 +67,7 @@ Then open `http://PI_ADDRESS/`. Follow the complete [Raspberry Pi setup guide](d
 
 ![Graber Hub Android app](https://raw.githubusercontent.com/JasonGraber/graber-hub-app/main/docs/images/chores.png)
 
-The phone app manages schedules, chores, recurring templates, timers, countdowns, verses, photos, colors, and display mode.
+The phone app manages schedules, chores, recurring templates, paid jobs, countdowns, verses, photos, colors, and display mode.
 
 ```bash
 git clone https://github.com/JasonGraber/graber-hub-app.git
@@ -100,6 +100,9 @@ Base URL: `http://PI_ADDRESS/api.php`
 | `/schedule/template` | POST | Apply a full-day schedule template |
 | `/chores` | GET/POST/PUT/DELETE | One-time chores |
 | `/chore-templates` | GET/POST/PUT/DELETE | Recurring chores |
+| `/paid-jobs` | GET/POST/PUT/DELETE | Paid job lifecycle |
+| `/paid-jobs/{id}/claim` | PUT | Claim after today's chores are complete |
+| `/paid-jobs/{id}/complete` | PUT | Complete or reopen a claimed job |
 | `/kids/{id}` | PUT | Kid name/color configuration |
 | `/countdowns` | GET/POST/DELETE | Countdown events |
 | `/timer` | GET/POST/DELETE | Shared timer |
