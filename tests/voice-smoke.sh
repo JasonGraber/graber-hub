@@ -7,11 +7,13 @@ data_file="$test_dir/data.json"
 port=18796
 base_url="http://127.0.0.1:$port/voice.php"
 token=voice-smoke-test-token
+timezone=America/New_York
 
-php "$repo_dir/scripts/create-demo-data.php" > "$data_file"
+GRABER_HUB_TIMEZONE="$timezone" php "$repo_dir/scripts/create-demo-data.php" > "$data_file"
 
 GRABER_HUB_DATA_FILE="$data_file" \
 GRABER_HUB_VOICE_TOKEN="$token" \
+GRABER_HUB_TIMEZONE="$timezone" \
 php -S "127.0.0.1:$port" -t "$repo_dir/web" >"$test_dir/php.log" 2>&1 &
 server_pid=$!
 trap 'kill "$server_pid" 2>/dev/null || true' EXIT
@@ -32,7 +34,7 @@ curl -fsS -X POST "$base_url/chore-done" \
     --data '{"kid":"Sam","chore":"make the bed"}' | jq -e \
     '.ok == true and .kid == "Sam" and .chore == "Make the bed"' >/dev/null
 
-today=$(date +%F)
+today=$(TZ="$timezone" date +%F)
 jq -e --arg today "$today" \
     '.chores[$today][] | select(.title == "Make the bed") | .done == true' \
     "$data_file" >/dev/null
